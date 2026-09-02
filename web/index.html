@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Mon Budget</title>
+<meta name="description" content="Budget et dépenses par enveloppes. Tout reste sur cet appareil.">
+<meta name="theme-color" content="#F3F4F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15171C" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mon Budget">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ======== barre de mois ======== -->
+  <header class="topbar" id="topbar">
+    <button class="month-nav" id="prev-month" type="button" aria-label="Mois précédent">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <div class="month-label">
+      <h1 id="month-name">Septembre</h1>
+      <p id="month-year">2026</p>
+    </div>
+    <button class="month-nav" id="next-month" type="button" aria-label="Mois suivant">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+    </button>
+  </header>
+
+  <main class="views" id="views">
+
+    <!-- ======== accueil ======== -->
+    <section class="view" id="view-accueil" aria-label="Accueil">
+      <div class="total-card">
+        <p class="total-k" id="total-k">Il te reste</p>
+        <p class="total-figure" id="total-figure">0,00 €</p>
+        <div class="total-track" id="total-track" role="img" aria-label="Répartition des dépenses par enveloppe"></div>
+        <p class="total-note" id="total-note"></p>
+      </div>
+
+      <div class="section-head">
+        <h2>Mes enveloppes</h2>
+        <button class="link-btn" id="toggle-manage" type="button">Gérer</button>
+      </div>
+
+      <div class="env-list" id="env-list"></div>
+    </section>
+
+    <!-- ======== dépenses ======== -->
+    <section class="view" id="view-depenses" hidden aria-label="Dépenses">
+      <div class="filter-bar" id="filter-bar" hidden>
+        <span id="filter-label"></span>
+        <button class="chip-x" id="clear-filter" type="button" aria-label="Retirer le filtre">✕</button>
+      </div>
+      <div class="tx-list" id="tx-list"></div>
+    </section>
+
+    <!-- ======== bilan ======== -->
+    <section class="view" id="view-bilan" hidden aria-label="Bilan">
+      <div class="total-card">
+        <p class="total-k">Dépensé ce mois-ci</p>
+        <p class="total-figure" id="bilan-figure">0,00 €</p>
+        <p class="total-note" id="bilan-compare"></p>
+      </div>
+
+      <div class="section-head"><h2>Six derniers mois</h2></div>
+      <div class="card">
+        <div class="hist" id="hist"></div>
+        <div class="hist-days" id="hist-labels"></div>
+      </div>
+
+      <div class="section-head"><h2>Répartition</h2></div>
+      <div class="card" id="repartition"></div>
+    </section>
+
+    <!-- ======== réglages ======== -->
+    <section class="view" id="view-reglages" hidden aria-label="Réglages">
+      <div class="section-head"><h2>Apparence</h2></div>
+      <div class="card">
+        <div class="seg" role="radiogroup" aria-label="Thème">
+          <button type="button" data-theme-set="auto" role="radio">Auto</button>
+          <button type="button" data-theme-set="light" role="radio">Clair</button>
+          <button type="button" data-theme-set="dark" role="radio">Sombre</button>
+        </div>
+      </div>
+
+      <div class="section-head"><h2>Mes données</h2></div>
+      <div class="card">
+        <p class="setting-note">Tout est enregistré sur cet appareil, rien n'est envoyé sur Internet. L'export sert à passer tes données d'un appareil à l'autre — ou à les mettre à l'abri.</p>
+        <div class="btn-row">
+          <button class="btn" id="export-btn" type="button">Exporter</button>
+          <button class="btn" id="import-btn" type="button">Importer</button>
+        </div>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+        <p class="setting-stat" id="data-stat"></p>
+        <button class="btn btn-danger" id="reset-btn" type="button">Tout effacer</button>
+      </div>
+
+      <div class="section-head"><h2>Installer sur l'iPhone</h2></div>
+      <div class="card">
+        <p class="setting-note">Dans Safari : bouton <strong>Partager</strong>, puis <strong>Sur l'écran d'accueil</strong>. L'appli s'ouvre alors en plein écran et fonctionne sans connexion.</p>
+      </div>
+
+      <p class="version" id="version"></p>
+    </section>
+
+  </main>
+
+  <button class="fab" id="fab" type="button" aria-label="Ajouter une dépense">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+
+  <nav class="tabbar" id="tabbar" aria-label="Navigation principale">
+    <button type="button" data-view="accueil" class="on">Accueil</button>
+    <button type="button" data-view="depenses">Dépenses</button>
+    <button type="button" data-view="bilan">Bilan</button>
+    <button type="button" data-view="reglages">Réglages</button>
+  </nav>
+</div>
+
+<!-- ======== feuille : dépense ======== -->
+<div class="scrim" id="scrim" hidden></div>
+
+<div class="sheet" id="sheet-tx" hidden role="dialog" aria-modal="true" aria-labelledby="tx-title">
+  <form id="tx-form" novalidate>
+    <div class="sheet-head">
+      <button class="sheet-close" type="button" data-close aria-label="Fermer">✕</button>
+      <h2 id="tx-title">Nouvelle dépense</h2>
+      <button class="sheet-save" type="submit">OK</button>
+    </div>
+
+    <label class="amount-field">
+      <span class="sr-only">Montant</span>
+      <input id="tx-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" required>
+      <span class="amount-cur">€</span>
+    </label>
+    <p class="field-error" id="tx-amount-error" hidden>Entre un montant, par exemple 12,50.</p>
+
+    <p class="field-label">Enveloppe</p>
+    <div class="env-picker" id="tx-env-picker" role="radiogroup" aria-label="Enveloppe"></div>
+
+    <label class="field">
+      <span class="field-label">Libellé</span>
+      <input id="tx-label" type="text" autocomplete="off" placeholder="Monoprix, essence, resto…" maxlength="60">
+    </label>
+
+    <label class="field">
+      <span class="field-label">Date</span>
+      <input id="tx-date" type="date" required>
+    </label>
+
+    <button class="btn btn-danger" id="tx-delete" type="button" hidden>Supprimer cette dépense</button>
+  </form>
+</div>
+
+<!-- ======== feuille : enveloppe ======== -->
+<div class="sheet" id="sheet-env" hidden role="dialog" aria-modal="true" aria-labelledby="env-title">
+  <form id="env-form" novalidate>
+    <div class="sheet-head">
+      <button class="sheet-close" type="button" data-close aria-label="Fermer">✕</button>
+      <h2 id="env-title">Nouvelle enveloppe</h2>
+      <button class="sheet-save" type="submit">OK</button>
+    </div>
+
+    <label class="field">
+      <span class="field-label">Nom</span>
+      <input id="env-name" type="text" autocomplete="off" placeholder="Courses, loyer, essence…" maxlength="24" required>
+    </label>
+    <p class="field-error" id="env-name-error" hidden>Donne un nom à l'enveloppe.</p>
+
+    <label class="field">
+      <span class="field-label">Budget par mois</span>
+      <span class="inline-amount">
+        <input id="env-budget" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" required>
+        <span class="amount-cur">€</span>
+      </span>
+    </label>
+
+    <p class="field-label">Couleur</p>
+    <div class="color-picker" id="env-colors" role="radiogroup" aria-label="Couleur"></div>
+
+    <button class="btn btn-danger" id="env-delete" type="button" hidden>Supprimer cette enveloppe</button>
+  </form>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

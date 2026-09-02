@@ -1,0 +1,573 @@
+<title>Quatre chartes pour Mon Budget</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Zilla+Slab:wght@400;500;600;700&family=Sora:wght@300;400;600;700&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;800&display=swap">
+
+<style>
+/* ============ jetons de la page (l'enveloppe, pas les chartes) ============ */
+:root{
+  --bg:#F4F5F3; --surface:#FFFFFF; --surface-2:#EBEEE9;
+  --ink:#15191B; --muted:#5B6461; --hair:#DBE0D9;
+  --accent:#2F5A6E; --accent-soft:#DFEAEF;
+  --bezel:#CBD0C9; --bezel-edge:#AFB6AD; --shadow:rgba(20,28,26,.14);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1213; --surface:#171B1C; --surface-2:#1E2325;
+    --ink:#E6EAE5; --muted:#98A29E; --hair:#282E30;
+    --accent:#8FBFD1; --accent-soft:#1B2A31;
+    --bezel:#2B3133; --bezel-edge:#3B4245; --shadow:rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1213; --surface:#171B1C; --surface-2:#1E2325;
+  --ink:#E6EAE5; --muted:#98A29E; --hair:#282E30;
+  --accent:#8FBFD1; --accent-soft:#1B2A31;
+  --bezel:#2B3133; --bezel-edge:#3B4245; --shadow:rgba(0,0,0,.5);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Newsreader",Georgia,serif; font-size:17px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1120px; margin:0 auto; padding:0 24px}
+
+/* ============ masthead ============ */
+.masthead{padding:72px 0 40px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--muted); margin:0 0 18px;
+}
+h1{
+  font-family:"Bricolage Grotesque","Helvetica Neue",sans-serif; font-weight:800;
+  font-size:clamp(38px,6.2vw,68px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 22px; text-wrap:balance; max-width:16ch;
+}
+.lede{max-width:62ch; font-size:19.5px; font-weight:300; margin:0 0 28px}
+.lede em{font-style:italic; color:var(--muted)}
+.facts{
+  display:flex; flex-wrap:wrap; gap:10px 28px; padding:0; margin:0; list-style:none;
+  font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); letter-spacing:.02em;
+}
+.facts li{display:flex; gap:8px; align-items:center}
+.facts li::before{content:""; width:7px; height:7px; background:var(--accent); border-radius:50%}
+
+/* ============ une direction ============ */
+.dir{
+  display:grid; grid-template-columns:minmax(0,1fr) auto; gap:56px; align-items:start;
+  padding:64px 0; border-bottom:1px solid var(--hair);
+}
+.dir:nth-of-type(even) .dir-mock{order:-1}
+.tag{
+  font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--accent); margin:0 0 12px;
+}
+h2{
+  font-family:"Bricolage Grotesque",sans-serif; font-weight:600; font-size:clamp(30px,4vw,44px);
+  letter-spacing:-.02em; line-height:1.05; margin:0 0 14px; text-wrap:balance;
+}
+.thesis{max-width:52ch; margin:0 0 30px; font-size:18px; font-weight:300}
+
+.specs{display:grid; gap:22px; max-width:560px}
+.spec-h{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--muted); margin:0 0 10px;
+}
+.swatches{display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:0; list-style:none}
+.swatches li{
+  display:flex; align-items:center; gap:9px; padding:6px 12px 6px 6px;
+  border:1px solid var(--hair); border-radius:999px; background:var(--surface);
+}
+.chip{width:22px; height:22px; border-radius:50%; background:var(--c); box-shadow:inset 0 0 0 1px rgba(0,0,0,.14)}
+.chip-t{display:flex; flex-direction:column; line-height:1.15}
+.chip-n{font-family:"IBM Plex Sans",sans-serif; font-size:12.5px; font-weight:500}
+.chip-h{font-family:"IBM Plex Mono",monospace; font-size:10.5px; color:var(--muted); letter-spacing:.02em}
+
+.rows{margin:0; display:grid; grid-template-columns:auto 1fr; gap:6px 18px}
+.rows dt{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); padding-top:3px;
+}
+.rows dd{margin:0; font-family:"IBM Plex Sans",sans-serif; font-size:14px; line-height:1.5}
+
+.fit{
+  margin:0; padding:16px 18px; background:var(--accent-soft); border-radius:3px;
+  font-size:15.5px; max-width:52ch; border-left:2px solid var(--accent);
+}
+.fit b{font-family:"IBM Plex Sans",sans-serif; font-weight:600; font-size:14px}
+
+/* ============ le téléphone ============ */
+.dir-mock{display:flex; flex-direction:column; align-items:center; gap:14px}
+.phone{
+  width:318px; padding:11px; border-radius:40px; background:var(--bezel);
+  box-shadow:0 1px 0 rgba(255,255,255,.35) inset, 0 18px 44px -18px var(--shadow), 0 0 0 1px var(--bezel-edge);
+  transition:transform .35s cubic-bezier(.2,.7,.3,1);
+}
+.phone:hover{transform:translateY(-5px)}
+.screen{
+  height:642px; border-radius:30px; overflow:hidden; position:relative;
+  display:flex; flex-direction:column;
+}
+.caption{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.08em;
+  color:var(--muted); text-align:center; margin:0;
+}
+.sb{display:flex; justify-content:space-between; align-items:center; padding:14px 20px 4px; font-size:11px; flex:none}
+
+/* ================= 01 · REGISTRE ================= */
+.rg-screen{background:#EDEEE8; color:#16324F; font-family:"IBM Plex Sans",sans-serif}
+.rg-screen::before{content:""; position:absolute; top:0; bottom:0; left:26px; width:1px; background:#C08279; opacity:.6}
+.rg-sb{font-family:"IBM Plex Mono",monospace; color:#5C7186; letter-spacing:.06em}
+.rg-body{padding:6px 20px 0 38px; flex:1; display:flex; flex-direction:column; gap:14px; position:relative}
+.rg-eyebrow{
+  font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.18em; text-transform:uppercase;
+  color:#6C8298; margin:0 0 6px;
+}
+.rg-label{font-family:"Zilla Slab",serif; font-size:13px; color:#5C7186; margin:0 0 2px; font-weight:500}
+.rg-figure{
+  font-family:"IBM Plex Mono",monospace; font-weight:500; font-size:37px; letter-spacing:-.03em;
+  margin:0; color:#16324F; font-variant-numeric:tabular-nums;
+}
+.rg-figure span{font-size:20px; color:#6C8298; margin-left:2px}
+.rg-gauge{height:11px; background:#E3E6DE; border:1px solid #B9C7D0; position:relative}
+.rg-gauge i{
+  position:absolute; inset:0 42% 0 0; border-right:1px solid #16324F;
+  background:repeating-linear-gradient(-45deg,#16324F 0 2px,transparent 2px 5px);
+}
+.rg-note{font-family:"IBM Plex Mono",monospace; font-size:10px; color:#6C8298; margin:-9px 0 0; letter-spacing:.01em}
+.rg-th{
+  display:flex; justify-content:space-between; font-family:"IBM Plex Mono",monospace; font-size:9.5px;
+  letter-spacing:.16em; text-transform:uppercase; color:#6C8298;
+  border-bottom:1px solid #16324F; padding-bottom:5px;
+}
+.rg-row{display:flex; align-items:baseline; gap:7px; padding:8px 0; border-bottom:1px solid #CBD6DC; font-size:13.5px}
+.rg-row .lead{flex:1; border-bottom:1px dotted #A9B8C2; transform:translateY(-4px)}
+.rg-row .amt{font-family:"IBM Plex Mono",monospace; font-size:13px; font-variant-numeric:tabular-nums}
+.rg-row .neg{color:#A8332A}
+.rg-j{display:flex; align-items:baseline; gap:10px; padding:6px 0; border-bottom:1px solid #DDE3E6; font-size:12.5px}
+.rg-j .d{font-family:"IBM Plex Mono",monospace; font-size:10.5px; color:#6C8298; width:38px; flex:none}
+.rg-j .l{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.rg-j .a{font-family:"IBM Plex Mono",monospace; color:#A8332A; font-variant-numeric:tabular-nums}
+.rg-nav{
+  margin-top:auto; display:flex; justify-content:space-between; padding:12px 20px 22px 38px;
+  border-top:1px solid #16324F; font-family:"IBM Plex Mono",monospace; font-size:9.5px;
+  letter-spacing:.12em; text-transform:uppercase; color:#7A8FA3;
+}
+.rg-nav .on{color:#16324F; border-bottom:2px solid #A8332A; padding-bottom:2px}
+
+/* ================= 02 · NOCTURNE ================= */
+.nc-screen{background:#0B0F16; color:#EDEFF3; font-family:"Sora",sans-serif}
+.nc-sb{color:#7A879A; letter-spacing:.04em}
+.nc-body{padding:10px 22px 0; flex:1; display:flex; flex-direction:column; gap:16px}
+.nc-top{display:flex; justify-content:space-between; align-items:center}
+.nc-month{font-size:15px; font-weight:600; letter-spacing:-.01em}
+.nc-av{
+  width:30px; height:30px; border-radius:50%; display:grid; place-items:center;
+  background:linear-gradient(160deg,#26303F,#171E29); color:#EFA94A; font-size:12px; font-weight:600;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.09);
+}
+.nc-label{margin:6px 0 0; font-size:11.5px; color:#7A879A; font-weight:300; letter-spacing:.06em}
+.nc-figure{
+  margin:3px 0 0; font-size:46px; font-weight:300; letter-spacing:-.04em; line-height:1;
+  font-variant-numeric:tabular-nums;
+}
+.nc-figure .dec{color:#9AA5B4}
+.nc-figure .cur{font-size:22px; color:#EFA94A; margin-left:5px}
+.nc-bar{height:6px; border-radius:99px; background:#1C2431; overflow:hidden}
+.nc-bar i{display:block; height:100%; width:58%; border-radius:99px; background:linear-gradient(90deg,#C97F2E,#EFA94A)}
+.nc-meta{display:flex; justify-content:space-between; font-size:11px; color:#7A879A; margin-top:-11px; font-weight:300}
+.nc-grid{display:grid; grid-template-columns:1fr 1fr; gap:9px}
+.nc-card{padding:12px; border-radius:16px; background:linear-gradient(170deg,#1A2230,#141A24); box-shadow:inset 0 1px 0 rgba(255,255,255,.055)}
+.nc-card p{margin:0}
+.nc-k{font-size:10.5px; color:#8B97A7; font-weight:300}
+.nc-v{font-size:15px; font-weight:600; margin-top:3px; font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+.nc-mini{height:3px; border-radius:99px; background:#242E3D; margin-top:9px; overflow:hidden}
+.nc-mini i{display:block; height:100%; background:#EFA94A; border-radius:99px}
+.nc-mini.warn i{background:#E2807E}
+.nc-sec{font-size:10.5px; color:#7A879A; letter-spacing:.09em; text-transform:uppercase; margin:2px 0 -8px; font-weight:400}
+.nc-tx{display:flex; align-items:center; gap:11px; padding:9px 0; border-bottom:1px solid #171E29}
+.nc-dot{width:27px; height:27px; border-radius:9px; background:#1C2431; display:grid; place-items:center; font-size:9.5px; color:#EFA94A; flex:none; font-weight:600}
+.nc-tx .l{flex:1; font-size:12.5px; font-weight:400}
+.nc-tx .l small{display:block; color:#6E7B8C; font-size:10px; font-weight:300}
+.nc-tx .a{font-size:12.5px; font-variant-numeric:tabular-nums; color:#D6DAE1}
+.nc-nav{
+  display:flex; justify-content:space-around; align-items:center;
+  margin:auto 18px 18px; padding:10px 8px; border-radius:22px;
+  background:rgba(255,255,255,.05); font-size:10px; color:#7A879A; letter-spacing:.04em; font-weight:300;
+}
+.nc-nav .on{color:#0B0F16; background:#EFA94A; padding:6px 14px; border-radius:99px; font-weight:600}
+
+/* ================= 03 · MILLIMÉTRÉ ================= */
+.ml-screen{
+  background:#FBFCFA; color:#111417; font-family:"IBM Plex Mono",monospace;
+  background-image:linear-gradient(#DFE7E2 1px,transparent 1px),linear-gradient(90deg,#DFE7E2 1px,transparent 1px);
+  background-size:19px 19px; background-position:-1px -1px;
+}
+.ml-sb{color:#6D7B76; letter-spacing:.08em; font-size:10px; margin:0 16px; padding:14px 0 8px; border-bottom:1px solid #111417}
+.ml-body{padding:14px 16px 0; flex:1; display:flex; flex-direction:column; gap:16px}
+.ml-k{font-size:9.5px; letter-spacing:.2em; color:#6D7B76; margin:0}
+.ml-figure{font-size:40px; font-weight:500; letter-spacing:-.045em; margin:4px 0 0; line-height:1; font-variant-numeric:tabular-nums}
+.ml-sub{font-size:9.5px; letter-spacing:.12em; color:#10556E; margin:7px 0 0}
+.ml-chart{display:flex; align-items:flex-end; gap:5px; height:62px; border-bottom:1px solid #111417}
+.ml-chart div{flex:1; background:#10556E}
+.ml-chart div.hi{background:#B4322A}
+.ml-days{display:flex; gap:5px; margin:6px 0 0}
+.ml-days span{flex:1; text-align:center; font-size:8.5px; color:#6D7B76; letter-spacing:.06em}
+.ml-tbl{border-top:1px solid #111417}
+.ml-hr{display:grid; grid-template-columns:1fr 62px 32px; gap:6px; font-size:9px; letter-spacing:.14em; color:#6D7B76; padding:7px 0; border-bottom:1px solid #C9D3CE}
+.ml-r{display:grid; grid-template-columns:1fr 62px 32px; gap:6px 6px; align-items:center; padding:8px 0 6px; border-bottom:1px solid #E3EAE6; font-size:11.5px}
+.ml-r .n{font-family:"IBM Plex Sans",sans-serif; font-size:12px; letter-spacing:0}
+.ml-r .v{text-align:right; font-variant-numeric:tabular-nums}
+.ml-r .p{text-align:right; color:#10556E; font-size:10.5px}
+.ml-r .p.over{color:#B4322A}
+.ml-track{grid-column:1/-1; height:3px; background:#E3EAE6; margin-top:5px}
+.ml-track i{display:block; height:100%; background:#10556E}
+.ml-track i.over{background:#B4322A}
+.ml-nav{
+  margin-top:auto; display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid #111417;
+  font-size:9px; letter-spacing:.12em; text-align:center;
+}
+.ml-nav span{padding:15px 0 22px; color:#6D7B76; border-right:1px solid #E3EAE6}
+.ml-nav span:last-child{border-right:0}
+.ml-nav .on{color:#FBFCFA; background:#111417}
+
+/* ================= 04 · ENVELOPPES ================= */
+.ev-screen{background:#F3F4F7; color:#22252B; font-family:"Nunito",sans-serif}
+.ev-sb{color:#8B909C; font-weight:700; font-size:11px}
+.ev-body{padding:6px 18px 0; flex:1; display:flex; flex-direction:column; gap:13px}
+.ev-hello{font-family:"Fredoka",sans-serif; font-size:21px; font-weight:600; margin:2px 0 0; letter-spacing:-.01em}
+.ev-total{background:#FFFFFF; border-radius:26px; padding:17px 20px 19px; box-shadow:0 10px 22px -14px rgba(34,37,43,.45)}
+.ev-total .k{font-size:12px; color:#767C8A; margin:0; font-weight:700}
+.ev-figure{
+  font-family:"Fredoka",sans-serif; font-size:35px; font-weight:600; margin:3px 0 13px;
+  letter-spacing:-.02em; font-variant-numeric:tabular-nums;
+}
+.ev-track{height:12px; border-radius:99px; background:#EBEDF2; overflow:hidden; display:flex; gap:2px}
+.ev-track i{display:block; height:100%}
+.ev-note{font-size:11.5px; color:#767C8A; margin:11px 0 0; font-weight:600}
+.ev-sec{font-family:"Fredoka",sans-serif; font-size:14px; font-weight:500; margin:3px 0 -3px}
+.ev-list{display:flex; flex-direction:column; gap:9px}
+.ev-env{
+  position:relative; overflow:hidden; border-radius:20px; padding:13px 15px;
+  background:var(--c); color:#fff; display:flex; align-items:center; gap:12px;
+}
+.ev-env::before{
+  content:""; position:absolute; top:0; left:0; right:0; height:30px;
+  background:rgba(255,255,255,.17); clip-path:polygon(0 0,100% 0,50% 100%);
+}
+.ev-env .t{flex:1; position:relative}
+.ev-env .t b{display:block; font-family:"Fredoka",sans-serif; font-weight:500; font-size:14.5px}
+.ev-env .t span{font-size:11px; opacity:.88; font-weight:600}
+.ev-ring{
+  width:42px; height:42px; border-radius:50%; flex:none; position:relative; display:grid; place-items:center;
+  background:conic-gradient(rgba(255,255,255,.94) var(--p),rgba(255,255,255,.28) 0);
+}
+.ev-ring::after{content:""; position:absolute; inset:5px; border-radius:50%; background:var(--c)}
+.ev-ring b{position:relative; z-index:1; font-size:11px; font-weight:800}
+.ev-nav{
+  margin:auto 16px 16px; background:#FFFFFF; border-radius:22px; padding:9px;
+  display:flex; justify-content:space-around; align-items:center;
+  box-shadow:0 10px 22px -16px rgba(34,37,43,.6); font-size:11px; font-weight:700; color:#9AA0AC;
+}
+.ev-nav .on{background:#22252B; color:#fff; padding:7px 15px; border-radius:99px}
+
+/* ============ choix ============ */
+.closing{padding:62px 0 90px}
+.qs{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:1px; background:var(--hair); border:1px solid var(--hair)}
+.q{background:var(--surface); padding:22px}
+.q p{margin:0}
+.qq{font-family:"Bricolage Grotesque",sans-serif; font-weight:600; font-size:17px; margin-bottom:8px; letter-spacing:-.01em}
+.qa{font-size:14.5px; color:var(--muted); font-family:"IBM Plex Sans",sans-serif; line-height:1.55}
+.qa strong{color:var(--ink); font-weight:600}
+.after{margin:30px 0 0; max-width:62ch; font-size:16.5px; font-weight:300}
+
+@media (max-width:900px){
+  .dir{grid-template-columns:1fr; gap:36px; padding:48px 0}
+  .dir:nth-of-type(even) .dir-mock{order:0}
+  .dir-mock{align-items:flex-start}
+  .masthead{padding:48px 0 32px}
+}
+@media (max-width:400px){ .phone{width:100%; max-width:318px} }
+@media (prefers-reduced-motion:reduce){ *{transition:none !important} }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Mon Budget · direction artistique · sept. 2026</p>
+  <h1>Quatre chartes pour Mon&nbsp;Budget</h1>
+  <p class="lede">Le même écran, rendu quatre fois : septembre, 1&nbsp;800&nbsp;€ de budget, 1&nbsp;043,40&nbsp;€ déjà engagés, cinq postes. <em>Le contenu ne bouge pas — seuls la palette, la typographie et le geste changent</em>, pour que le choix porte sur le style et rien d'autre.</p>
+  <ul class="facts">
+    <li>4 directions complètes</li>
+    <li>Maquettes réelles, pas des moodboards</li>
+    <li>À trancher avant la première ligne de code</li>
+  </ul>
+</header>
+
+<!-- ==================== 01 · REGISTRE ==================== -->
+<section class="dir">
+  <div class="dir-spec">
+    <p class="tag">Papier &amp; encre</p>
+    <h2>Registre</h2>
+    <p class="thesis">Le carnet de comptes tenu à la main : papier réglé, filet rouge dans la marge, colonnes alignées au millimètre, pointillés de conduite entre le poste et son montant. Une appli qui a l'air sérieuse parce qu'elle ressemble à l'objet dont elle prend la suite. Aucune ombre, aucun dégradé — seulement des traits.</p>
+    <div class="specs">
+      <div>
+        <p class="spec-h">Palette</p>
+        <ul class="swatches">
+          <li><span class="chip" style="--c:#EDEEE8"></span><span class="chip-t"><span class="chip-n">Papier</span><span class="chip-h">#EDEEE8</span></span></li>
+          <li><span class="chip" style="--c:#16324F"></span><span class="chip-t"><span class="chip-n">Encre</span><span class="chip-h">#16324F</span></span></li>
+          <li><span class="chip" style="--c:#B9C7D0"></span><span class="chip-t"><span class="chip-n">Réglure</span><span class="chip-h">#B9C7D0</span></span></li>
+          <li><span class="chip" style="--c:#A8332A"></span><span class="chip-t"><span class="chip-n">Débit</span><span class="chip-h">#A8332A</span></span></li>
+          <li><span class="chip" style="--c:#2E6B4F"></span><span class="chip-t"><span class="chip-n">Crédit</span><span class="chip-h">#2E6B4F</span></span></li>
+        </ul>
+      </div>
+      <div>
+        <p class="spec-h">Typographie &amp; geste</p>
+        <dl class="rows">
+          <dt>Titres</dt><dd>Zilla Slab — un slab d'imprimerie, pas un sans neutre</dd>
+          <dt>Chiffres</dt><dd>IBM Plex Mono, chasse fixe, alignés sur la virgule</dd>
+          <dt>Formes</dt><dd>Angles droits, rayon 0 à 2&nbsp;px, filets de 1&nbsp;px</dd>
+          <dt>Couleur</dt><dd>Le rouge ne sert qu'au débit et au dépassement</dd>
+        </dl>
+      </div>
+      <p class="fit"><b>Le bon choix si</b> — la saisie et la relecture comptent plus que la démo : beaucoup de lignes lisibles d'un coup d'œil, une densité assumée, un ton adulte qui ne se démodera pas dans deux ans.</p>
+    </div>
+  </div>
+  <div class="dir-mock">
+    <div class="phone"><div class="screen rg-screen">
+      <div class="sb rg-sb"><span>9:41</span><span>Sept. 2026</span></div>
+      <div class="rg-body">
+        <div>
+          <p class="rg-eyebrow">Exercice en cours</p>
+          <p class="rg-label">Reste à dépenser</p>
+          <p class="rg-figure">756,60<span>€</span></p>
+        </div>
+        <div class="rg-gauge"><i></i></div>
+        <p class="rg-note">1 043,40 engagés · 1 800,00 alloués</p>
+        <div>
+          <div class="rg-th"><span>Poste</span><span>Engagé</span></div>
+          <div class="rg-row"><span>Logement</span><span class="lead"></span><span class="amt neg">620,00</span></div>
+          <div class="rg-row"><span>Courses</span><span class="lead"></span><span class="amt">212,80</span></div>
+          <div class="rg-row"><span>Transports</span><span class="lead"></span><span class="amt">96,40</span></div>
+          <div class="rg-row"><span>Sorties</span><span class="lead"></span><span class="amt">65,23</span></div>
+          <div class="rg-row"><span>Abonnements</span><span class="lead"></span><span class="amt">48,97</span></div>
+        </div>
+        <div>
+          <p class="rg-eyebrow">Journal</p>
+          <div class="rg-j"><span class="d">02.09</span><span class="l">Monoprix Bastille</span><span class="a">−34,12</span></div>
+          <div class="rg-j"><span class="d">01.09</span><span class="l">Loyer</span><span class="a">−620,00</span></div>
+          <div class="rg-j"><span class="d">01.09</span><span class="l">Navigo mensuel</span><span class="a">−88,80</span></div>
+        </div>
+      </div>
+      <nav class="rg-nav"><span class="on">Comptes</span><span>Journal</span><span>Postes</span><span>Bilan</span></nav>
+    </div></div>
+    <p class="caption">01 — Registre</p>
+  </div>
+</section>
+
+<!-- ==================== 02 · NOCTURNE ==================== -->
+<section class="dir">
+  <div class="dir-spec">
+    <p class="tag">Nuit &amp; satin</p>
+    <h2>Nocturne</h2>
+    <p class="thesis">La direction néo-banque, mais tenue : un bleu-noir profond, des surfaces satinées avec un liseré de lumière sur l'arête haute, et un seul accent ambré qui ne sert qu'à une chose — dire où en est le budget. Le montant restant occupe le haut de l'écran comme un titre de couverture. Tout le reste chuchote.</p>
+    <div class="specs">
+      <div>
+        <p class="spec-h">Palette</p>
+        <ul class="swatches">
+          <li><span class="chip" style="--c:#0B0F16"></span><span class="chip-t"><span class="chip-n">Nuit</span><span class="chip-h">#0B0F16</span></span></li>
+          <li><span class="chip" style="--c:#1A2230"></span><span class="chip-t"><span class="chip-n">Ardoise</span><span class="chip-h">#1A2230</span></span></li>
+          <li><span class="chip" style="--c:#EFA94A"></span><span class="chip-t"><span class="chip-n">Ambre</span><span class="chip-h">#EFA94A</span></span></li>
+          <li><span class="chip" style="--c:#E2807E"></span><span class="chip-t"><span class="chip-n">Alerte</span><span class="chip-h">#E2807E</span></span></li>
+          <li><span class="chip" style="--c:#9AA5B4"></span><span class="chip-t"><span class="chip-n">Brume</span><span class="chip-h">#9AA5B4</span></span></li>
+        </ul>
+      </div>
+      <div>
+        <p class="spec-h">Typographie &amp; geste</p>
+        <dl class="rows">
+          <dt>Titres</dt><dd>Sora en graisse 300, très grand corps, interlettrage serré</dd>
+          <dt>Chiffres</dt><dd>Tabulaires, décimales en gris pour hiérarchiser la lecture</dd>
+          <dt>Formes</dt><dd>Rayon 16 à 22&nbsp;px, dégradés très courts, aucune bordure franche</dd>
+          <dt>Couleur</dt><dd>Ambre = accent unique ; rose = dépassement</dd>
+        </dl>
+      </div>
+      <p class="fit"><b>Le bon choix si</b> — l'appli s'ouvre surtout le soir, pour un coup d'œil rapide : « il me reste combien ? ». C'est la plus premium des quatre, et la plus économe en information par écran.</p>
+    </div>
+  </div>
+  <div class="dir-mock">
+    <div class="phone"><div class="screen nc-screen">
+      <div class="sb nc-sb"><span>9:41</span><span>5G · 100 %</span></div>
+      <div class="nc-body">
+        <div class="nc-top"><span class="nc-month">Septembre</span><span class="nc-av">N</span></div>
+        <div>
+          <p class="nc-label">Reste à dépenser</p>
+          <p class="nc-figure">756<span class="dec">,60</span><span class="cur">€</span></p>
+        </div>
+        <div class="nc-bar"><i></i></div>
+        <div class="nc-meta"><span>58 % engagés</span><span>1 800,00 €</span></div>
+        <div class="nc-grid">
+          <div class="nc-card"><p class="nc-k">Logement</p><p class="nc-v">620,00 €</p><div class="nc-mini warn"><i style="width:100%"></i></div></div>
+          <div class="nc-card"><p class="nc-k">Courses</p><p class="nc-v">212,80 €</p><div class="nc-mini"><i style="width:61%"></i></div></div>
+          <div class="nc-card"><p class="nc-k">Transports</p><p class="nc-v">96,40 €</p><div class="nc-mini warn"><i style="width:96%"></i></div></div>
+          <div class="nc-card"><p class="nc-k">Sorties</p><p class="nc-v">65,23 €</p><div class="nc-mini"><i style="width:43%"></i></div></div>
+        </div>
+        <p class="nc-sec">Derniers mouvements</p>
+        <div>
+          <div class="nc-tx"><span class="nc-dot">MP</span><span class="l">Monoprix Bastille<small>Courses · aujourd'hui</small></span><span class="a">−34,12</span></div>
+          <div class="nc-tx"><span class="nc-dot">NV</span><span class="l">Navigo mensuel<small>Transports · 1 sept.</small></span><span class="a">−88,80</span></div>
+        </div>
+      </div>
+      <nav class="nc-nav"><span class="on">Accueil</span><span>Dépenses</span><span>Budgets</span><span>Profil</span></nav>
+    </div></div>
+    <p class="caption">02 — Nocturne</p>
+  </div>
+</section>
+
+<!-- ==================== 03 · MILLIMÉTRÉ ==================== -->
+<section class="dir">
+  <div class="dir-spec">
+    <p class="tag">Grille &amp; données</p>
+    <h2>Millimétré</h2>
+    <p class="thesis">Du papier millimétré comme fond, une chasse fixe partout, et l'information poussée à sa densité maximale sans jamais devenir illisible. Les tableaux sont de vrais tableaux, les pourcentages sont affichés, l'histogramme des sept derniers jours tient en soixante pixels de haut. Le style d'un instrument de mesure plutôt que d'un produit.</p>
+    <div class="specs">
+      <div>
+        <p class="spec-h">Palette</p>
+        <ul class="swatches">
+          <li><span class="chip" style="--c:#FBFCFA"></span><span class="chip-t"><span class="chip-n">Fond</span><span class="chip-h">#FBFCFA</span></span></li>
+          <li><span class="chip" style="--c:#DFE7E2"></span><span class="chip-t"><span class="chip-n">Grille</span><span class="chip-h">#DFE7E2</span></span></li>
+          <li><span class="chip" style="--c:#111417"></span><span class="chip-t"><span class="chip-n">Trait</span><span class="chip-h">#111417</span></span></li>
+          <li><span class="chip" style="--c:#10556E"></span><span class="chip-t"><span class="chip-n">Mesure</span><span class="chip-h">#10556E</span></span></li>
+          <li><span class="chip" style="--c:#B4322A"></span><span class="chip-t"><span class="chip-n">Seuil</span><span class="chip-h">#B4322A</span></span></li>
+        </ul>
+      </div>
+      <div>
+        <p class="spec-h">Typographie &amp; geste</p>
+        <dl class="rows">
+          <dt>Système</dt><dd>IBM Plex Mono pour tout ce qui est chiffre ou étiquette</dd>
+          <dt>Libellés</dt><dd>IBM Plex Sans, seule respiration non monospacée</dd>
+          <dt>Formes</dt><dd>Rayon 0. La grille de 19&nbsp;px cale tous les espacements</dd>
+          <dt>Couleur</dt><dd>Deux teintes utiles : la mesure, et le seuil dépassé</dd>
+        </dl>
+      </div>
+      <p class="fit"><b>Le bon choix si</b> — l'objectif est d'analyser plutôt que de se rassurer : comparer des mois, repérer une dérive, exporter en CSV. C'est la direction qui vieillira le mieux et la moins chère à faire évoluer.</p>
+    </div>
+  </div>
+  <div class="dir-mock">
+    <div class="phone"><div class="screen ml-screen">
+      <div class="sb ml-sb"><span>9:41</span><span>MOIS 09 / 2026</span></div>
+      <div class="ml-body">
+        <div>
+          <p class="ml-k">RESTE À DÉPENSER</p>
+          <p class="ml-figure">756,60</p>
+          <p class="ml-sub">EUR · 42,0 % DU BUDGET</p>
+        </div>
+        <div>
+          <div class="ml-chart">
+            <div style="height:28%"></div><div style="height:46%"></div><div style="height:19%"></div>
+            <div style="height:63%"></div><div style="height:34%"></div><div class="hi" style="height:100%"></div>
+            <div style="height:41%"></div>
+          </div>
+          <div class="ml-days"><span>27</span><span>28</span><span>29</span><span>30</span><span>31</span><span>01</span><span>02</span></div>
+        </div>
+        <div class="ml-tbl">
+          <div class="ml-hr"><span>POSTE</span><span style="text-align:right">ENGAGÉ</span><span style="text-align:right">%</span></div>
+          <div class="ml-r"><span class="n">Logement</span><span class="v">620,00</span><span class="p over">100</span><span class="ml-track"><i class="over" style="width:100%"></i></span></div>
+          <div class="ml-r"><span class="n">Courses</span><span class="v">212,80</span><span class="p">61</span><span class="ml-track"><i style="width:61%"></i></span></div>
+          <div class="ml-r"><span class="n">Transports</span><span class="v">96,40</span><span class="p over">96</span><span class="ml-track"><i class="over" style="width:96%"></i></span></div>
+          <div class="ml-r"><span class="n">Sorties</span><span class="v">65,23</span><span class="p">43</span><span class="ml-track"><i style="width:43%"></i></span></div>
+          <div class="ml-r"><span class="n">Abonnements</span><span class="v">48,97</span><span class="p over">98</span><span class="ml-track"><i class="over" style="width:98%"></i></span></div>
+        </div>
+      </div>
+      <nav class="ml-nav"><span class="on">TABLEAU</span><span>SAISIE</span><span>POSTES</span><span>MOIS</span></nav>
+    </div></div>
+    <p class="caption">03 — Millimétré</p>
+  </div>
+</section>
+
+<!-- ==================== 04 · ENVELOPPES ==================== -->
+<section class="dir">
+  <div class="dir-spec">
+    <p class="tag">Pochettes &amp; couleurs</p>
+    <h2>Enveloppes</h2>
+    <p class="thesis">La méthode des enveloppes prise au mot : chaque poste est une pochette colorée, avec son rabat et son anneau de remplissage. On ne lit pas des nombres, on voit une enveloppe qui se vide. Formes épaisses, coins très arrondis, une couleur franche par catégorie — la seule des quatre où la couleur porte de l'information et pas seulement du ton.</p>
+    <div class="specs">
+      <div>
+        <p class="spec-h">Palette</p>
+        <ul class="swatches">
+          <li><span class="chip" style="--c:#F3F4F7"></span><span class="chip-t"><span class="chip-n">Fond</span><span class="chip-h">#F3F4F7</span></span></li>
+          <li><span class="chip" style="--c:#3F6DE0"></span><span class="chip-t"><span class="chip-n">Logement</span><span class="chip-h">#3F6DE0</span></span></li>
+          <li><span class="chip" style="--c:#E86A4E"></span><span class="chip-t"><span class="chip-n">Courses</span><span class="chip-h">#E86A4E</span></span></li>
+          <li><span class="chip" style="--c:#23A26D"></span><span class="chip-t"><span class="chip-n">Transports</span><span class="chip-h">#23A26D</span></span></li>
+          <li><span class="chip" style="--c:#7B57D6"></span><span class="chip-t"><span class="chip-n">Sorties</span><span class="chip-h">#7B57D6</span></span></li>
+          <li><span class="chip" style="--c:#22252B"></span><span class="chip-t"><span class="chip-n">Texte</span><span class="chip-h">#22252B</span></span></li>
+        </ul>
+      </div>
+      <div>
+        <p class="spec-h">Typographie &amp; geste</p>
+        <dl class="rows">
+          <dt>Titres</dt><dd>Fredoka, ronde et pleine, jamais en dessous de 14&nbsp;px</dd>
+          <dt>Texte</dt><dd>Nunito en graisse 600 par défaut — tout est un peu gras</dd>
+          <dt>Formes</dt><dd>Rayon 20 à 26&nbsp;px, rabat d'enveloppe en surimpression</dd>
+          <dt>Couleur</dt><dd>Une teinte par poste, réutilisée dans tout le reste de l'appli</dd>
+        </dl>
+      </div>
+      <p class="fit"><b>Le bon choix si</b> — l'appli doit donner envie d'y revenir tous les jours, éventuellement à plusieurs (couple, colocation). C'est la plus lisible de loin, mais elle plafonne : au-delà de sept ou huit postes, les couleurs se marchent dessus.</p>
+    </div>
+  </div>
+  <div class="dir-mock">
+    <div class="phone"><div class="screen ev-screen">
+      <div class="sb ev-sb"><span>9:41</span><span>5G · 100 %</span></div>
+      <div class="ev-body">
+        <p class="ev-hello">Septembre</p>
+        <div class="ev-total">
+          <p class="k">Il te reste</p>
+          <p class="ev-figure">756,60 €</p>
+          <div class="ev-track">
+            <i style="width:34%; background:#3F6DE0"></i>
+            <i style="width:12%; background:#E86A4E"></i>
+            <i style="width:5%; background:#23A26D"></i>
+            <i style="width:4%; background:#7B57D6"></i>
+          </div>
+          <p class="ev-note">sur 1 800 € · 28 jours restants</p>
+        </div>
+        <p class="ev-sec">Mes enveloppes</p>
+        <div class="ev-list">
+          <div class="ev-env" style="--c:#3F6DE0"><span class="t"><b>Logement</b><span>0 € restants sur 620 €</span></span><span class="ev-ring" style="--p:100%"><b>100</b></span></div>
+          <div class="ev-env" style="--c:#E86A4E"><span class="t"><b>Courses</b><span>137,20 € restants</span></span><span class="ev-ring" style="--p:61%"><b>61</b></span></div>
+          <div class="ev-env" style="--c:#23A26D"><span class="t"><b>Transports</b><span>3,60 € restants</span></span><span class="ev-ring" style="--p:96%"><b>96</b></span></div>
+          <div class="ev-env" style="--c:#7B57D6"><span class="t"><b>Sorties</b><span>84,77 € restants</span></span><span class="ev-ring" style="--p:43%"><b>43</b></span></div>
+        </div>
+      </div>
+      <nav class="ev-nav"><span class="on">Accueil</span><span>Ajouter</span><span>Bilan</span><span>Moi</span></nav>
+    </div></div>
+    <p class="caption">04 — Enveloppes</p>
+  </div>
+</section>
+
+<!-- ==================== CHOIX ==================== -->
+<section class="closing">
+  <h2>Comment trancher</h2>
+  <div class="qs">
+    <div class="q">
+      <p class="qq">Tu ouvres l'appli pour quoi ?</p>
+      <p class="qa">Saisir une dépense en trois secondes → <strong>Enveloppes</strong> ou <strong>Nocturne</strong>. Comprendre où part l'argent → <strong>Millimétré</strong> ou <strong>Registre</strong>.</p>
+    </div>
+    <div class="q">
+      <p class="qq">Combien de postes ?</p>
+      <p class="qa">Quatre à six, stables → <strong>Enveloppes</strong> tient parfaitement. Une douzaine ou plus, avec des sous-postes → <strong>Registre</strong> ou <strong>Millimétré</strong>.</p>
+    </div>
+    <div class="q">
+      <p class="qq">Seul ou à plusieurs ?</p>
+      <p class="qa">Un budget partagé se lit souvent par-dessus l'épaule : la couleur par poste d'<strong>Enveloppes</strong> devient alors un vrai langage commun.</p>
+    </div>
+    <div class="q">
+      <p class="qq">Quel horizon ?</p>
+      <p class="qa">Un outil qui doit encore te plaire dans trois ans penche vers <strong>Registre</strong> et <strong>Millimétré</strong> : ils ne datent pas. <strong>Nocturne</strong> est le plus mode, donc le plus périssable.</p>
+    </div>
+  </div>
+  <p class="after">La direction retenue devient un jeu de jetons CSS — couleurs, échelle typographique, rayons, espacements — écrit une fois avec sa variante sombre et réutilisé par tous les écrans. Rien n'interdit non plus de croiser : la rigueur de <strong>Millimétré</strong> dans les tableaux, avec les couleurs de poste d'<strong>Enveloppes</strong>.</p>
+</section>
+
+</div>

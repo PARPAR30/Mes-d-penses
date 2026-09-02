@@ -1,0 +1,90 @@
+# Mon Budget
+
+Suivi de budget et de dépenses par **enveloppes** : un poste = une pochette colorée qui se vide au fil du mois.
+
+Un seul code source pour trois usages :
+
+- un **site mobile** (GitHub Pages) installable sur l'écran d'accueil de l'iPhone ;
+- une **application Windows** (`.exe`) ;
+- une **application macOS** (`.dmg`).
+
+Les données restent **sur l'appareil** (`localStorage`), sans compte ni serveur. Chaque appareil a donc son propre budget ; l'export/import JSON sert à les transférer.
+
+---
+
+## Démarrer
+
+```bash
+npm run serve
+```
+
+Affiche deux adresses : une pour l'ordinateur, une pour l'iPhone sur le même Wi-Fi.
+
+Le fichier `web/index.html` s'ouvre aussi directement par double-clic — sans le mode hors-ligne, qui exige `http://` ou `https://`.
+
+## Installer sur l'iPhone
+
+1. Ouvrir le site dans **Safari** (pas Chrome : lui seul sait installer une app).
+2. Bouton **Partager** → **Sur l'écran d'accueil**.
+
+L'appli s'ouvre alors en plein écran, sans barre d'adresse, et fonctionne sans connexion.
+
+## Mettre en ligne
+
+Le workflow `.github/workflows/pages.yml` publie le dossier `web/` à chaque `push` sur `main`. Une seule chose à faire côté GitHub, une fois : **Settings → Pages → Source : GitHub Actions**.
+
+## Construire les applications
+
+En local, pour la plateforme courante :
+
+```bash
+npm install
+npm run build
+```
+
+Résultats dans `src-tauri/target/release/bundle/` (`nsis/*.exe` et `msi/*.msi` sous Windows, `dmg/*.dmg` sous macOS).
+
+Le `.dmg` ne peut être construit que sur un Mac — d'où le workflow `build-mac.yml`, qui le fabrique sur les serveurs GitHub (binaire universel Intel + Apple Silicon). Le `.exe` a son équivalent dans `build-windows.yml`. Les deux déposent le paquet dans les **artefacts** du run, à télécharger depuis l'onglet Actions.
+
+> Pour compiler en local il faut Rust (`rustup`) et, sous Windows, les *Build Tools* Visual Studio avec la charge de travail C++.
+
+## Les données
+
+| | |
+|---|---|
+| Où | `localStorage`, clé `mon-budget/v1` |
+| Quoi | enveloppes (nom, couleur, budget mensuel) et dépenses (montant, libellé, date) |
+| Montants | stockés en **centimes** (entiers), jamais en nombres à virgule |
+| Transfert | Réglages → **Exporter** produit un `.json` ; **Importer** le relit sur un autre appareil |
+
+Rien n'est envoyé sur Internet — il n'y a aucun serveur. Effacer les données du site dans Safari efface le budget : d'où l'export.
+
+## Structure
+
+```
+web/                  le site — c'est aussi le contenu des apps desktop
+  index.html          squelette des quatre vues
+  styles.css          charte « Enveloppes » (thème clair + sombre)
+  app.js              état, stockage, rendu, interactions
+  manifest.webmanifest / sw.js    installation et mode hors-ligne
+  fonts/              Fredoka + Nunito embarquées (aucun appel réseau)
+  icons/              icônes PWA et iPhone
+src-tauri/            coque desktop (Tauri 2) → .exe et .dmg
+tools/
+  make-icons.mjs      régénère toutes les icônes (npm run icons)
+  serve.mjs           serveur de test local (npm run serve)
+design/chartes.html   les quatre directions graphiques proposées au départ
+.github/workflows/    déploiement du site, build Windows, build macOS
+```
+
+## Régénérer les icônes
+
+Les icônes sont dessinées par code, pas éditées à la main. Pour changer la couleur ou la forme, modifier `tools/make-icons.mjs` puis :
+
+```bash
+npm run icons
+```
+
+## Après une modification de `web/`
+
+Penser à incrémenter `CACHE` dans `web/sw.js` : sans ça, les appareils qui ont déjà installé l'appli continuent de servir l'ancienne version depuis leur cache.

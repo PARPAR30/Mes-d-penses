@@ -1,0 +1,16 @@
+{
+  "name": "mon-budget",
+  "version": "1.0.0",
+  "description": "Budget et dépenses par enveloppes — 100% local (localStorage)",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icons": "node tools/make-icons.mjs",
+    "serve": "node tools/serve.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

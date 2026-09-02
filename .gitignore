@@ -1,0 +1,8 @@
+node_modules/
+package-lock.json
+src-tauri/target/
+src-tauri/gen/
+src-tauri/Cargo.lock
+*.log
+.DS_Store
+Thumbs.db
