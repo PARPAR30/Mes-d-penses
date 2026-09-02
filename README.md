@@ -1,6 +1,6 @@
 # Mon Budget
 
-Suivi de budget et de dépenses par **enveloppes** : un poste = une pochette colorée qui se vide au fil du mois.
+Suivi de budget et de dépenses par **enveloppes** : un poste, un budget mensuel, une jauge qui se remplit au fil du mois.
 
 Un seul code source pour trois usages :
 
@@ -28,6 +28,21 @@ Le fichier `web/index.html` s'ouvre aussi directement par double-clic — sans l
 2. Bouton **Partager** → **Sur l'écran d'accueil**.
 
 L'appli s'ouvre alors en plein écran, sans barre d'adresse, et fonctionne sans connexion.
+
+## Ajouter une dépense depuis un raccourci Apple
+
+iOS n'offre à aucune appli tierce le moyen de détecter un paiement Apple Pay pour se déclencher automatiquement — ni Raccourcis, ni Mon Budget. La carte **Réglages → Ajout rapide** propose donc le plus proche que permette la plateforme : un raccourci lancé en un geste (bouton Action, tapotement arrière, écran d'accueil) qui ouvre directement le tiroir « Nouvelle dépense ».
+
+Le contrat d'URL, géré par `consumeShortcutLink()` dans `web/app.js` :
+
+| Paramètre | Effet |
+|---|---|
+| `ajouter=1` | requis — ouvre le tiroir de saisie |
+| `montant=12,50` | préremplit le montant (accepte virgule ou point) ; ignoré silencieusement s'il est illisible |
+| `env=Courses` | présélectionne l'enveloppe, par id ou par nom (insensible à la casse) |
+| `libelle=Boulangerie` | préremplit le libellé |
+
+La dépense n'est jamais enregistrée sans confirmation : le tiroir s'ouvre toujours pour laisser vérifier montant et catégorie avant validation.
 
 ## Mettre en ligne
 
@@ -64,16 +79,16 @@ Rien n'est envoyé sur Internet — il n'y a aucun serveur. Effacer les données
 ```
 web/                  le site — c'est aussi le contenu des apps desktop
   index.html          squelette des quatre vues
-  styles.css          charte « Enveloppes » (thème clair + sombre)
+  styles.css          direction « pièce » : plate, filets plutôt qu'ombres, thème clair + sombre
   app.js              état, stockage, rendu, interactions
   manifest.webmanifest / sw.js    installation et mode hors-ligne
-  fonts/              Fredoka + Nunito embarquées (aucun appel réseau)
+  fonts/              Archivo embarquée (aucun appel réseau)
   icons/              icônes PWA et iPhone
 src-tauri/            coque desktop (Tauri 2) → .exe et .dmg
 tools/
   make-icons.mjs      régénère toutes les icônes (npm run icons)
   serve.mjs           serveur de test local (npm run serve)
-design/chartes.html   les quatre directions graphiques proposées au départ
+design/chartes.html   les quatre directions proposées au départ (état d'origine, avant aplatissement)
 .github/workflows/    déploiement du site, build Windows, build macOS
 ```
 

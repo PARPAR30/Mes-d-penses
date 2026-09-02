@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>Mon Budget</title>
 <meta name="description" content="Budget et dépenses par enveloppes. Tout reste sur cet appareil.">
-<meta name="theme-color" content="#F3F4F7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#15171C" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F4F5F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101318" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Mon Budget">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -77,8 +77,61 @@
         <div class="hist-days" id="hist-labels"></div>
       </div>
 
-      <div class="section-head"><h2>Répartition</h2></div>
-      <div class="card" id="repartition"></div>
+      <div class="section-head tight">
+        <h2>Répartition</h2>
+        <div class="seg seg-sm" id="chart-mode" role="radiogroup" aria-label="Forme du graphique">
+          <button type="button" data-chart="barre" role="radio">Barre</button>
+          <button type="button" data-chart="camembert" role="radio">Camembert</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="chart" id="chart">
+          <p class="chart-tip" id="chart-tip"></p>
+          <div class="chart-bar" id="chart-bar" role="group"></div>
+          <div class="chart-pie" id="chart-pie" hidden>
+            <svg id="pie-svg" viewBox="0 0 100 100" role="img"></svg>
+            <div class="pie-center">
+              <p class="pie-v" id="pie-value"></p>
+              <p class="pie-k">au total</p>
+            </div>
+          </div>
+        </div>
+        <div class="legend" id="repartition"></div>
+      </div>
+    </section>
+
+    <!-- ======== récurrent : calendrier, revenus, dépenses ======== -->
+    <section class="view" id="view-recurrent" hidden aria-label="Récurrent">
+      <div class="card">
+        <div class="cal-legend">
+          <span><i class="cal-dot cal-dot-out"></i> Dépense</span>
+          <span><i class="cal-dot cal-dot-in"></i> Revenu</span>
+        </div>
+        <div class="cal-weekdays">
+          <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
+        </div>
+        <div class="cal-grid" id="cal-grid" role="group" aria-label="Calendrier du mois"></div>
+      </div>
+
+      <div class="card" id="cal-day"></div>
+
+      <div class="section-head tight">
+        <h2>Revenus</h2>
+        <button class="link-btn" id="income-add" type="button">+ Ajouter</button>
+      </div>
+      <div class="card">
+        <p class="setting-note">Salaire, versement régulier… ajouté une fois, il revient seul chaque mois à la date choisie.</p>
+        <div class="tx-list" id="income-list"></div>
+      </div>
+
+      <div class="section-head tight">
+        <h2>Dépenses</h2>
+        <button class="link-btn" id="recurring-add" type="button">+ Ajouter</button>
+      </div>
+      <div class="card">
+        <p class="setting-note">Loyer, abonnements… ajoutée une fois, elle revient seule chaque mois à la date choisie.</p>
+        <div class="tx-list" id="recurring-list"></div>
+      </div>
     </section>
 
     <!-- ======== réglages ======== -->
@@ -109,6 +162,29 @@
         <p class="setting-note">Dans Safari : bouton <strong>Partager</strong>, puis <strong>Sur l'écran d'accueil</strong>. L'appli s'ouvre alors en plein écran et fonctionne sans connexion.</p>
       </div>
 
+      <div class="section-head"><h2>Ajout rapide (Raccourcis)</h2></div>
+      <div class="card">
+        <p class="setting-note">Apple ne laisse aucune appli, y compris Raccourcis, détecter un paiement Apple Pay pour se déclencher toute seule. Le plus rapide que permette l'iPhone : un raccourci lancé en un geste (bouton Action, tapotement arrière, ou depuis l'écran d'accueil) qui ouvre directement le tiroir <strong>Nouvelle dépense</strong>, montant déjà rempli si tu le donnes à Raccourcis.</p>
+
+        <div class="linkbox" id="shortcut-linkbox" hidden>
+          <input type="text" id="shortcut-link" readonly aria-label="Lien du raccourci, à compléter par le montant">
+          <button class="btn" id="shortcut-copy" type="button">Copier</button>
+        </div>
+        <p class="setting-note" id="shortcut-unavailable" hidden>Ce lien ne fonctionne que depuis le site en ligne : ouvre Mon Budget via son adresse http(s), pas en fichier local, pour l'obtenir.</p>
+
+        <details class="shortcut-steps">
+          <summary>Créer le raccourci (2 minutes)</summary>
+          <ol>
+            <li>Ouvrir l'app <strong>Raccourcis</strong> → <strong>+</strong>.</li>
+            <li>Ajouter l'action <strong>Demander un nombre</strong>, invite « Montant ». Astuce : mets le presse-papiers en valeur par défaut — si tu viens de copier un montant, il sera déjà prérempli.</li>
+            <li>Ajouter l'action <strong>Texte</strong> : coller le lien ci-dessus, puis insérer le nombre demandé juste après.</li>
+            <li>Ajouter l'action <strong>Ouvrir les URL</strong>, branchée sur ce texte.</li>
+            <li>Nommer le raccourci « Dépense » et fermer.</li>
+            <li>Pour le lancer en un geste : Réglages → <strong>Bouton Action</strong>, ou Réglages → Accessibilité → <strong>Tapotement arrière</strong>, ou ajouter le raccourci à l'écran d'accueil.</li>
+          </ol>
+        </details>
+      </div>
+
       <p class="version" id="version"></p>
     </section>
 
@@ -122,6 +198,7 @@
     <button type="button" data-view="accueil" class="on">Accueil</button>
     <button type="button" data-view="depenses">Dépenses</button>
     <button type="button" data-view="bilan">Bilan</button>
+    <button type="button" data-view="recurrent">Récurrent</button>
     <button type="button" data-view="reglages">Réglages</button>
   </nav>
 </div>
@@ -188,6 +265,58 @@
     <div class="color-picker" id="env-colors" role="radiogroup" aria-label="Couleur"></div>
 
     <button class="btn btn-danger" id="env-delete" type="button" hidden>Supprimer cette enveloppe</button>
+  </form>
+</div>
+
+<!-- ======== feuille : dépense ou revenu récurrent ======== -->
+<div class="sheet" id="sheet-recurring" hidden role="dialog" aria-modal="true" aria-labelledby="recurring-title">
+  <form id="recurring-form" novalidate>
+    <div class="sheet-head">
+      <button class="sheet-close" type="button" data-close aria-label="Fermer">✕</button>
+      <h2 id="recurring-title">Nouvelle dépense récurrente</h2>
+      <button class="sheet-save" type="submit">OK</button>
+    </div>
+
+    <div class="seg" id="recurring-type" role="radiogroup" aria-label="Type">
+      <button type="button" data-type="depense" role="radio">Dépense</button>
+      <button type="button" data-type="revenu" role="radio">Revenu</button>
+    </div>
+
+    <label class="amount-field">
+      <span class="sr-only">Montant</span>
+      <input id="recurring-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" required>
+      <span class="amount-cur">€</span>
+    </label>
+    <p class="field-error" id="recurring-amount-error" hidden>Entre un montant, par exemple 12,50.</p>
+
+    <p class="field-label">Modèle</p>
+    <p class="setting-note" id="icon-disclaimer">Pastilles couleur de marque + initiale — pas les logos officiels, protégés.</p>
+    <div class="icon-picker" id="recurring-icon-picker" role="radiogroup" aria-label="Modèle"></div>
+
+    <div id="recurring-env-block">
+      <p class="field-label">Enveloppe</p>
+      <div class="env-picker" id="recurring-env-picker" role="radiogroup" aria-label="Enveloppe"></div>
+    </div>
+
+    <label class="field">
+      <span class="field-label">Libellé</span>
+      <input id="recurring-label" type="text" autocomplete="off" placeholder="Loyer, Netflix, Salaire…" maxlength="60" required>
+    </label>
+    <p class="field-error" id="recurring-label-error" hidden>Donne un nom.</p>
+
+    <label class="field">
+      <span class="field-label">Jour du mois</span>
+      <input id="recurring-day" type="number" inputmode="numeric" min="1" max="28" placeholder="1" required>
+    </label>
+    <p class="field-error" id="recurring-day-error" hidden>Choisis un jour entre 1 et 28.</p>
+
+    <p class="field-label">État</p>
+    <div class="seg" id="recurring-state" role="radiogroup" aria-label="État">
+      <button type="button" data-active="1" role="radio">Active</button>
+      <button type="button" data-active="0" role="radio">En pause</button>
+    </div>
+
+    <button class="btn btn-danger" id="recurring-delete" type="button" hidden>Supprimer</button>
   </form>
 </div>
 

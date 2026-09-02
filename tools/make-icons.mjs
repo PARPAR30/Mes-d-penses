@@ -1,6 +1,6 @@
 /* ============================================================
    Génère toutes les icônes de Mon Budget à partir d'une seule
-   définition vectorielle : une enveloppe blanche sur fond bleu.
+   définition vectorielle : une pièce blanche sur fond bleu.
 
      node tools/make-icons.mjs
 
@@ -21,8 +21,6 @@ const PAPER = [0xff, 0xff, 0xff];
 
 /* ---------------------------------------------------------- géométrie */
 
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
-
 function insideRoundRect(x, y, x0, y0, x1, y1, r) {
   if (x < x0 || x > x1 || y < y0 || y > y1) return false;
   const cx = Math.min(Math.max(x, x0 + r), x1 - r);
@@ -30,27 +28,35 @@ function insideRoundRect(x, y, x0, y0, x1, y1, r) {
   return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
 }
 
-function distToSegment(px, py, ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const t = clamp01(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy));
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+/* Une pièce : disque plein, listel gravé en creux, et un € au centre.
+   Le € est un arc ouvert à droite traversé par deux barres. */
+const COIN_R = 0.33;
+const RIM_IN = 0.270, RIM_OUT = 0.294;
+const EURO_IN = 0.112, EURO_OUT = 0.182;
+const EURO_OPENING = 38; // demi-angle de l'ouverture, en degrés
+
+function insideEuro(x, y) {
+  const dx = x - 0.5, dy = y - 0.5;
+  const dist = Math.hypot(dx, dy);
+
+  // l'arc, ouvert vers la droite
+  if (dist >= EURO_IN && dist <= EURO_OUT) {
+    const angle = Math.abs((Math.atan2(dy, dx) * 180) / Math.PI);
+    if (angle > EURO_OPENING) return true;
+  }
+  // les deux barres
+  const inBar = (cy) => x >= 0.325 && x <= 0.575 && Math.abs(y - cy) <= 0.028;
+  return inBar(0.462) || inBar(0.538);
 }
 
 /** Couleur du point normalisé (x, y) dans [0,1]². */
 function sample(x, y, rounded) {
   if (rounded && !insideRoundRect(x, y, 0, 0, 1, 1, 0.225)) return null;
 
-  // corps de l'enveloppe
-  if (insideRoundRect(x, y, 0.155, 0.285, 0.845, 0.715, 0.055)) {
-    // rabat : un « V » creusé dans le papier
-    const half = 0.028;
-    const left = distToSegment(x, y, 0.185, 0.315, 0.5, 0.55);
-    const right = distToSegment(x, y, 0.5, 0.55, 0.815, 0.315);
-    if (Math.min(left, right) < half) return BG;
-    return PAPER;
-  }
-  return BG;
+  const dist = Math.hypot(x - 0.5, y - 0.5);
+  if (dist > COIN_R) return BG;
+  if (dist >= RIM_IN && dist <= RIM_OUT) return BG; // listel
+  return insideEuro(x, y) ? BG : PAPER;
 }
 
 /** Rend une icône RGBA de `size` px, anticrénelée par suréchantillonnage. */

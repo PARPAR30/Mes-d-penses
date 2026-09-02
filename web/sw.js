@@ -1,7 +1,7 @@
 /* Service worker : met l'appli en cache pour qu'elle démarre sans connexion.
    Changer CACHE à chaque version force le rafraîchissement des fichiers. */
 
-const CACHE = "mon-budget-1.0.0";
+const CACHE = "mon-budget-1.6.0";
 
 const ASSETS = [
   "./",
@@ -10,16 +10,14 @@ const ASSETS = [
   "app.js",
   "manifest.webmanifest",
   "fonts/fonts.css",
-  "fonts/fredoka-500-latin.woff2",
-  "fonts/fredoka-500-latin-ext.woff2",
-  "fonts/fredoka-600-latin.woff2",
-  "fonts/fredoka-600-latin-ext.woff2",
-  "fonts/nunito-400-latin.woff2",
-  "fonts/nunito-400-latin-ext.woff2",
-  "fonts/nunito-600-latin.woff2",
-  "fonts/nunito-600-latin-ext.woff2",
-  "fonts/nunito-800-latin.woff2",
-  "fonts/nunito-800-latin-ext.woff2",
+  "fonts/archivo-400-latin.woff2",
+  "fonts/archivo-400-latin-ext.woff2",
+  "fonts/archivo-500-latin.woff2",
+  "fonts/archivo-500-latin-ext.woff2",
+  "fonts/archivo-600-latin.woff2",
+  "fonts/archivo-600-latin-ext.woff2",
+  "fonts/archivo-700-latin.woff2",
+  "fonts/archivo-700-latin-ext.woff2",
   "icons/icon-192.png",
   "icons/icon-512.png",
   "icons/apple-touch-icon.png",

@@ -6,20 +6,80 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.6.0";
 
+/* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
+   prend la teinte suivante, jamais une couleur tirée au hasard.
+   Les sept valeurs sont vérifiées pour rester distinguables en
+   protanopie et en deutéranopie, et lisibles sur fond clair comme
+   sur fond sombre — d'où des teintes un peu rabattues (l'ambre et la
+   tomate d'origine passaient sous le seuil de contraste). */
 const COLORS = [
-  "#3F6DE0", "#E86A4E", "#23A26D", "#7B57D6",
-  "#E8A61F", "#D6497E", "#1B9AAA", "#5C6B7A",
+  "#3F6DE0", "#E4634A", "#23A26D", "#7B57D6",
+  "#B8820A", "#D6497E", "#1B9AAA",
 ];
 
 const DEFAULT_ENVELOPES = [
   { nom: "Logement", couleur: "#3F6DE0", budget: 80000 },
-  { nom: "Courses", couleur: "#E86A4E", budget: 40000 },
+  { nom: "Courses", couleur: "#E4634A", budget: 40000 },
   { nom: "Transports", couleur: "#23A26D", budget: 15000 },
   { nom: "Sorties", couleur: "#7B57D6", budget: 20000 },
-  { nom: "Abonnements", couleur: "#E8A61F", budget: 6000 },
+  { nom: "Abonnements", couleur: "#B8820A", budget: 6000 },
 ];
+
+/* Au-delà de six parts, la queue est repliée dans « Autres » : ajouter
+   des couleurs les rendrait indistinguables les unes des autres. */
+const MAX_SEGMENTS = 6;
+
+/* Modèles pour les dépenses et revenus récurrents : une pastille couleur
+   de marque + initiale, PAS les logos officiels — ce sont des marques
+   déposées qu'on ne reproduit pas. Le nom en toutes lettres, toujours
+   affiché juste à côté, porte l'identification réelle. */
+const ICON_PRESETS = [
+  { id: "netflix", nom: "Netflix", mono: "N", couleur: "#E50914", type: "depense" },
+  { id: "disneyplus", nom: "Disney+", mono: "D+", couleur: "#113CCF", type: "depense" },
+  { id: "spotify", nom: "Spotify", mono: "S", couleur: "#1DB954", type: "depense" },
+  { id: "appletv", nom: "Apple TV+", mono: "TV", couleur: "#1D1D1F", type: "depense" },
+  { id: "applemusic", nom: "Apple Musique", mono: "M", couleur: "#FA243C", type: "depense" },
+  { id: "icloud", nom: "iCloud+", mono: "iC", couleur: "#3693F3", type: "depense" },
+  { id: "amazonprime", nom: "Amazon Prime", mono: "P", couleur: "#FF9900", type: "depense" },
+  { id: "youtube", nom: "YouTube Premium", mono: "YT", couleur: "#FF0000", type: "depense" },
+  { id: "deezer", nom: "Deezer", mono: "D", couleur: "#A238FF", type: "depense" },
+  { id: "canalplus", nom: "Canal+", mono: "C+", couleur: "#000000", type: "depense" },
+  { id: "free", nom: "Free", mono: "F", couleur: "#CE0F17", type: "depense" },
+  { id: "orange", nom: "Orange", mono: "O", couleur: "#FF7900", type: "depense" },
+  { id: "sfr", nom: "SFR", mono: "SFR", couleur: "#E2001A", type: "depense" },
+  { id: "bouygues", nom: "Bouygues Telecom", mono: "B", couleur: "#0082C8", type: "depense" },
+  { id: "edf", nom: "EDF", mono: "E", couleur: "#FF5F00", type: "depense" },
+  { id: "googleone", nom: "Google One", mono: "G", couleur: "#4285F4", type: "depense" },
+  { id: "microsoft365", nom: "Microsoft 365", mono: "M", couleur: "#E81123", type: "depense" },
+  { id: "adobe", nom: "Adobe", mono: "Ad", couleur: "#FA0F00", type: "depense" },
+  { id: "openai", nom: "ChatGPT Plus", mono: "AI", couleur: "#10A37F", type: "depense" },
+  { id: "notion", nom: "Notion", mono: "N", couleur: "#000000", type: "depense" },
+  { id: "dropbox", nom: "Dropbox", mono: "Db", couleur: "#0061FF", type: "depense" },
+  { id: "salle", nom: "Salle de sport", mono: "SP", couleur: "#5C6B7A", type: "depense" },
+  { id: "assurance", nom: "Assurance", mono: "AS", couleur: "#5C6B7A", type: "depense" },
+  { id: "salaire", nom: "Salaire", mono: "S", couleur: null, type: "revenu" },
+  { id: "freelance", nom: "Freelance", mono: "F", couleur: null, type: "revenu" },
+  { id: "remboursement", nom: "Remboursement", mono: "R", couleur: null, type: "revenu" },
+  { id: "pension", nom: "Pension", mono: "P", couleur: null, type: "revenu" },
+  { id: "autrerevenu", nom: "Autre revenu", mono: "€", couleur: null, type: "revenu" },
+];
+
+/** Couleur + initiale à afficher pour une règle récurrente. */
+function iconFor(rule) {
+  const preset = ICON_PRESETS.find((p) => p.id === rule.icone);
+  if (preset) return { mono: preset.mono, couleur: preset.couleur ?? "var(--positive)" };
+  if (rule.type === "revenu") return { mono: (rule.libelle[0] || "€").toUpperCase(), couleur: "var(--positive)" };
+  const env = envById(rule.envelopeId);
+  return { mono: (rule.libelle[0] || "?").toUpperCase(), couleur: env ? env.couleur : "var(--ink-3)" };
+}
+
+/* Camembert : rayon et épaisseur dans un viewBox de 100×100, gouttière
+   en unités normalisées (le cercle fait 100 unités, donc 1 = 1 %).
+   Mettre PIE_WIDTH à 2 × PIE_R donnerait un camembert plein. */
+const PIE_R = 35, PIE_WIDTH = 26, PIE_GAP = 0.9;
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 /* ---------------------------------------------------------- outils */
 
@@ -74,7 +134,9 @@ function seed() {
     version: 1,
     envelopes: DEFAULT_ENVELOPES.map((e, i) => ({ id: uid(), ordre: i, ...e })),
     expenses: [],
-    settings: { theme: "auto" },
+    incomes: [],
+    recurring: [],
+    settings: { theme: "auto", chart: "barre" },
     updatedAt: Date.now(),
   };
 }
@@ -83,14 +145,26 @@ function isSane(d) {
   return d && Array.isArray(d.envelopes) && Array.isArray(d.expenses);
 }
 
+// une sauvegarde antérieure à la version 1.6 n'a ni « incomes », ni règle
+// avec un champ « type » ou « icone » : on comble en la lisant
+function normalizeData(data) {
+  data.settings = { theme: "auto", chart: "barre", ...data.settings };
+  data.incomes = Array.isArray(data.incomes) ? data.incomes : [];
+  data.recurring = (Array.isArray(data.recurring) ? data.recurring : []).map((r) => ({
+    type: "depense",
+    icone: null,
+    ...r,
+  }));
+  return data;
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return seed();
     const data = JSON.parse(raw);
     if (!isSane(data)) return seed();
-    data.settings = data.settings || { theme: "auto" };
-    return data;
+    return normalizeData(data);
   } catch {
     return seed();
   }
@@ -110,11 +184,19 @@ const state = {
   month: todayIso().slice(0, 7),
   view: "accueil",
   filterEnv: null,
+  focusSlice: null,
+  focusSticky: false,
+  calDay: null,
   managing: false,
   editingTx: null,
   editingEnv: null,
+  editingRecurring: null,
   draftColor: COLORS[0],
   draftEnv: null,
+  draftRecurringEnv: null,
+  draftRecurringActive: true,
+  draftRecurringType: "depense",
+  draftRecurringIcon: null,
 };
 
 /* ---------------------------------------------------------- sélecteurs */
@@ -139,6 +221,48 @@ function daysLeft(month) {
   return new Date(y, m, 0).getDate() - now.getDate();
 }
 
+/* ---------------------------------------------------------- dépenses récurrentes
+   Une règle récurrente n'est qu'un modèle : elle « tamponne » une vraie
+   dépense (avec recurringId pour la reconnaître) dès que le jour choisi
+   est atteint dans le mois réel en cours. Rien n'est jamais pré-rempli
+   pour un mois futur, et les mois manqués avant la création de la règle
+   ne sont jamais comblés — seul le mois réel courant est concerné. */
+
+/** Règles valides (revenu, ou dépense dont l'enveloppe existe encore), filtrables par type. */
+function recurringRules(type) {
+  return state.data.recurring.filter(
+    (r) => (r.type === "revenu" || envById(r.envelopeId)) && (!type || r.type === type)
+  );
+}
+
+/** Tamponne les règles actives dont le jour est atteint et pas encore générées ce mois-ci. Renvoie le nombre créé. */
+function generateRecurring() {
+  const month = todayIso().slice(0, 7);
+  const day = new Date().getDate();
+  let created = 0;
+
+  for (const rule of recurringRules()) {
+    if (!rule.actif || day < rule.jour) continue;
+    const target = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
+    const already = target.some((t) => t.recurringId === rule.id && monthOf(t.date) === month);
+    if (already) continue;
+
+    const record = {
+      id: uid(),
+      montant: rule.montant,
+      libelle: rule.libelle,
+      date: `${month}-${pad(rule.jour)}`,
+      recurringId: rule.id,
+      createdAt: Date.now(),
+    };
+    if (rule.type === "revenu") state.data.incomes.push(record);
+    else state.data.expenses.push({ ...record, envelopeId: rule.envelopeId });
+    created++;
+  }
+  if (created) save();
+  return created;
+}
+
 /* ---------------------------------------------------------- rendu */
 
 function render() {
@@ -156,6 +280,7 @@ function render() {
   if (state.view === "accueil") renderAccueil();
   if (state.view === "depenses") renderDepenses();
   if (state.view === "bilan") renderBilan();
+  if (state.view === "recurrent") renderRecurrent();
   if (state.view === "reglages") renderReglages();
 }
 
@@ -203,30 +328,36 @@ function renderAccueil() {
     row.style.setProperty("--c", env.couleur);
     row.dataset.env = env.id;
 
-    const text = document.createElement("span");
-    text.className = "env-t";
+    const head = document.createElement("span");
+    head.className = "env-head";
+    const dot = document.createElement("span");
+    dot.className = "env-dot";
     const name = document.createElement("b");
+    name.className = "env-n";
     name.textContent = env.nom;
+    const amount = document.createElement("span");
+    amount.className = "env-a";
+    amount.textContent = over ? `−${money(spentHere - env.budget)}` : money(env.budget - spentHere);
+    head.append(dot, name, amount);
+
+    const foot = document.createElement("span");
+    foot.className = "env-foot";
     const sub = document.createElement("span");
-    sub.textContent = over
-      ? `dépassé de ${money(spentHere - env.budget)}`
-      : `${money(env.budget - spentHere)} restants sur ${money(env.budget)}`;
-    text.append(name, sub);
+    sub.className = "env-sub";
+    sub.textContent = `${over ? "dépassé" : "restants"} sur ${money(env.budget)}`;
+    const right = document.createElement("span");
+    right.className = state.managing ? "env-edit" : "env-p";
+    right.textContent = state.managing ? "Modifier" : `${pct} %`;
+    foot.append(sub, right);
 
-    const badge = document.createElement("span");
-    if (state.managing) {
-      badge.className = "env-gear";
-      badge.textContent = "✎";
-    } else {
-      badge.className = "env-ring";
-      badge.style.setProperty("--p", `${Math.min(pct, 100)}%`);
-      const val = document.createElement("b");
-      val.textContent = pct;
-      badge.append(val);
-    }
+    const track = document.createElement("span");
+    track.className = "env-track";
+    const fill = document.createElement("i");
+    fill.style.width = `${Math.min(pct, 100)}%`;
+    track.append(fill);
 
-    row.append(text, badge);
-    row.setAttribute("aria-label", `${env.nom}, ${sub.textContent}`);
+    row.append(head, foot, track);
+    row.setAttribute("aria-label", `${env.nom}, ${amount.textContent} ${sub.textContent}, ${pct} % utilisés`);
     list.append(row);
   }
 
@@ -301,13 +432,13 @@ function renderDepenses() {
     const text = document.createElement("span");
     text.className = "tx-t";
     const label = document.createElement("b");
-    label.textContent = tx.libelle || (env ? env.nom : "Dépense");
+    label.textContent = (tx.recurringId ? "↻ " : "") + (tx.libelle || (env ? env.nom : "Dépense"));
     const sub = document.createElement("span");
     sub.textContent = env ? env.nom : "Sans enveloppe";
     text.append(label, sub);
 
     const amount = document.createElement("span");
-    amount.className = "tx-a";
+    amount.className = "tx-a is-expense";
     amount.textContent = `−${money(tx.montant)}`;
 
     row.append(dot, text, amount);
@@ -353,41 +484,157 @@ function renderBilan() {
     labels.append(tag);
   });
 
-  const rep = $("#repartition");
-  rep.replaceChildren();
-  const perEnv = spentByEnv(state.month);
-  const rows = envelopes()
-    .map((e) => ({ env: e, spent: perEnv[e.id] || 0 }))
-    .filter((r) => r.spent > 0)
-    .sort((a, b) => b.spent - a.spent);
+  renderRepartition(spent);
+}
 
+/* Répartition : une barre empilée à 100 % — la forme faite pour la
+   part-du-tout — doublée d'une légende qui donne les chiffres en
+   toutes lettres. La couleur ne porte donc jamais l'information
+   seule : chaque part est nommée et chiffrée juste en dessous. */
+function renderRepartition(total) {
+  const bar = $("#chart-bar");
+  const legend = $("#repartition");
+  bar.replaceChildren();
+  legend.replaceChildren();
+
+  const perEnv = spentByEnv(state.month);
+  let rows = envelopes()
+    .map((e) => ({ id: e.id, nom: e.nom, couleur: e.couleur, value: perEnv[e.id] || 0 }))
+    .filter((r) => r.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  $("#chart").hidden = !rows.length;
+  $("#chart-mode").hidden = !rows.length; // rien à mettre en forme sans dépense
   if (!rows.length) {
-    rep.append(emptyBlock("Aucune dépense", "Le bilan se remplit dès la première dépense du mois."));
+    legend.append(emptyBlock("Aucune dépense", "Le bilan se remplit dès la première dépense du mois."));
     return;
   }
 
-  for (const { env, spent: value } of rows) {
-    const block = document.createElement("div");
-    const line = document.createElement("div");
-    line.className = "rep-row";
-    const name = document.createElement("span");
-    name.className = "n";
-    name.textContent = env.nom;
-    const amount = document.createElement("span");
-    amount.className = "v";
-    amount.textContent = `${money(value)}  ·  ${Math.round((value / spent) * 100)} %`;
-    line.append(name, amount);
-
-    const bar = document.createElement("div");
-    bar.className = "rep-bar";
-    bar.style.setProperty("--c", env.couleur);
-    const fill = document.createElement("i");
-    fill.style.width = `${(value / rows[0].spent) * 100}%`;
-    bar.append(fill);
-
-    block.append(line, bar);
-    rep.append(block);
+  if (rows.length > MAX_SEGMENTS) {
+    const tail = rows.slice(MAX_SEGMENTS - 1);
+    rows = rows.slice(0, MAX_SEGMENTS - 1);
+    rows.push({
+      id: "autres",
+      nom: `${tail.length} autres postes`,
+      couleur: null,
+      value: tail.reduce((sum, r) => sum + r.value, 0),
+    });
   }
+
+  const share = (v) => Math.round((v / total) * 100);
+  if (state.focusSlice && !rows.some((r) => r.id === state.focusSlice)) state.focusSlice = null;
+
+  const pie = state.data.settings.chart === "camembert";
+  $("#chart-bar").hidden = pie;
+  $("#chart-pie").hidden = !pie;
+  for (const b of document.querySelectorAll("[data-chart]")) {
+    const on = b.dataset.chart === state.data.settings.chart;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+
+  bar.setAttribute(
+    "aria-label",
+    `Répartition des dépenses : ${rows.map((r) => `${r.nom} ${share(r.value)} %`).join(", ")}`
+  );
+  bar.classList.toggle("has-focus", Boolean(state.focusSlice));
+
+  for (const row of rows) {
+    const active = state.focusSlice === row.id;
+
+    const seg = document.createElement("button");
+    seg.type = "button";
+    seg.dataset.slice = row.id;
+    if (row.couleur) seg.style.setProperty("--c", row.couleur);
+    else seg.classList.add("is-other");
+    seg.classList.toggle("on", active);
+    seg.setAttribute("aria-label", `${row.nom}, ${money(row.value)}, ${share(row.value)} %`);
+    bar.append(seg);
+
+    const line = document.createElement("button");
+    line.type = "button";
+    line.className = "legend-row" + (active ? " on" : "");
+    line.dataset.slice = row.id;
+
+    const dot = document.createElement("span");
+    dot.className = "legend-dot" + (row.couleur ? "" : " is-other");
+    if (row.couleur) dot.style.setProperty("--c", row.couleur);
+
+    const name = document.createElement("span");
+    name.className = "legend-n";
+    name.textContent = row.nom;
+
+    const value = document.createElement("span");
+    value.className = "legend-v";
+    value.textContent = money(row.value);
+
+    const pct = document.createElement("span");
+    pct.className = "legend-p";
+    pct.textContent = `${share(row.value)} %`;
+
+    line.append(dot, name, value, pct);
+    legend.append(line);
+  }
+
+  // une part minuscule garde 3 px pour rester visible et cliquable
+  bar.style.gridTemplateColumns = rows.map((r) => `minmax(3px, ${r.value}fr)`).join(" ");
+
+  renderPie(rows, total, share);
+
+  const focused = rows.find((r) => r.id === state.focusSlice);
+  $("#chart-tip").textContent = focused
+    ? `${focused.nom} · ${money(focused.value)} · ${share(focused.value)} %`
+    : "Touche une part pour le détail";
+  $("#chart-tip").classList.toggle("on", Boolean(focused));
+}
+
+/* Le camembert lit exactement les mêmes parts que la barre : un seul
+   cercle par part, découpé en pointillés. pathLength="100" ramène la
+   circonférence à cent unités, donc une unité vaut un pour cent et il
+   n'y a aucun calcul d'angle à faire. */
+function renderPie(rows, total, share) {
+  const svg = $("#pie-svg");
+  const box = $("#chart-pie");
+  svg.replaceChildren();
+  box.classList.toggle("has-focus", Boolean(state.focusSlice));
+
+  // sur une part unique, une gouttière laisserait une encoche dans un disque plein
+  const gap = rows.length > 1 ? PIE_GAP : 0;
+  let offset = 0;
+
+  const ring = document.createElementNS(SVG_NS, "g");
+  ring.setAttribute("transform", "rotate(-90 50 50)"); // départ à midi
+
+  for (const row of rows) {
+    const length = Math.max((row.value / total) * 100 - gap, 0.5);
+    const arc = document.createElementNS(SVG_NS, "circle");
+    arc.setAttribute("cx", "50");
+    arc.setAttribute("cy", "50");
+    arc.setAttribute("r", String(PIE_R));
+    arc.setAttribute("fill", "none");
+    arc.setAttribute("pathLength", "100");
+    arc.setAttribute("stroke-width", String(PIE_WIDTH));
+    arc.setAttribute("stroke-dasharray", `${length} ${100 - length}`);
+    arc.setAttribute("stroke-dashoffset", String(-offset));
+    arc.dataset.slice = row.id;
+    // attribut de présentation plutôt que style.stroke : c'est la forme
+    // universellement comprise, et « Autres » prend sa teinte par la CSS
+    if (row.couleur) arc.setAttribute("stroke", row.couleur);
+    else arc.classList.add("is-other");
+    arc.classList.toggle("on", state.focusSlice === row.id);
+    ring.append(arc);
+    offset += (row.value / total) * 100;
+  }
+
+  svg.append(ring);
+  svg.setAttribute(
+    "aria-label",
+    `Répartition des dépenses : ${rows.map((r) => `${r.nom} ${share(r.value)} %`).join(", ")}`
+  );
+  // le trou fait environ 95 px de large : un gros total y serait à l'étroit
+  const label = money(total);
+  $("#pie-value").textContent = label;
+  $("#pie-value").style.fontSize = label.length > 10 ? "13px" : "16px";
 }
 
 function renderReglages() {
@@ -397,12 +644,177 @@ function renderReglages() {
     b.setAttribute("aria-checked", String(on));
   }
   const n = state.data.expenses.length;
+  const inc = state.data.incomes.length;
   const e = state.data.envelopes.length;
+  const r = state.data.recurring.length;
   const when = state.data.updatedAt
     ? new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short" }).format(state.data.updatedAt)
     : "jamais";
-  $("#data-stat").textContent = `${n} dépense${n > 1 ? "s" : ""} · ${e} enveloppe${e > 1 ? "s" : ""} · modifié le ${when}`;
+  $("#data-stat").textContent =
+    `${n} dépense${n > 1 ? "s" : ""} · ${inc} revenu${inc > 1 ? "s" : ""} · ${e} enveloppe${e > 1 ? "s" : ""} · ${r} récurrente${r > 1 ? "s" : ""} · modifié le ${when}`;
   $("#version").textContent = `Mon Budget ${APP_VERSION}`;
+
+  // un fichier local (double-clic), ou l'appli de bureau sur son hôte interne,
+  // n'a pas d'adresse qu'un raccourci sur un autre appareil puisse rouvrir
+  const local = /^(localhost|127\.0\.0\.1|(.*\.)?tauri\.localhost)$/i.test(location.hostname);
+  const online = /^https?:$/.test(location.protocol) && !local;
+  $("#shortcut-linkbox").hidden = !online;
+  $("#shortcut-unavailable").hidden = online;
+  if (online) $("#shortcut-link").value = `${location.origin}${location.pathname}?ajouter=1&montant=`;
+}
+
+/* ---------------------------------------------------------- récurrent : calendrier + listes */
+
+function renderRecurrent() {
+  renderCalendar();
+  renderRecurringList("revenu", "#income-list", "Aucun revenu récurrent", "Salaire, versement régulier… ajoute-le une fois, il revient seul chaque mois.");
+  renderRecurringList("depense", "#recurring-list", "Aucune dépense récurrente", "Le loyer, un abonnement… ajoute-le une fois, il revient seul chaque mois.");
+}
+
+/* Grille du mois affiché (même navigation que les autres vues) : un
+   point rond rouge si une dépense tombe ce jour-là, un point losange
+   vert si un revenu tombe ce jour-là — la forme distingue les deux en
+   plus de la couleur, pour rester lisible en cas de daltonisme rouge-vert. */
+function renderCalendar() {
+  const grid = $("#cal-grid");
+  grid.replaceChildren();
+
+  const [y, m] = state.month.split("-").map(Number);
+  const startOffset = (new Date(y, m - 1, 1).getDay() + 6) % 7; // lundi en premier
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const rules = recurringRules().filter((r) => r.actif);
+  const today = todayIso();
+
+  for (let i = 0; i < startOffset; i++) {
+    const filler = document.createElement("div");
+    filler.className = "cal-cell cal-pad";
+    grid.append(filler);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const iso = `${state.month}-${pad(day)}`;
+    const here = rules.filter((r) => r.jour === day);
+
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "cal-cell";
+    if (iso === today) cell.classList.add("is-today");
+    if (state.calDay === iso) cell.classList.add("is-selected");
+    cell.dataset.day = iso;
+
+    const num = document.createElement("span");
+    num.className = "cal-num";
+    num.textContent = String(day);
+    cell.append(num);
+
+    if (here.length) {
+      const dots = document.createElement("span");
+      dots.className = "cal-dots";
+      if (here.some((r) => r.type === "depense")) dots.append(Object.assign(document.createElement("i"), { className: "cal-dot cal-dot-out" }));
+      if (here.some((r) => r.type === "revenu")) dots.append(Object.assign(document.createElement("i"), { className: "cal-dot cal-dot-in" }));
+      cell.append(dots);
+    }
+
+    cell.setAttribute(
+      "aria-label",
+      `${day} — ${here.length ? here.map((r) => r.libelle).join(", ") : "rien de prévu"}`
+    );
+    grid.append(cell);
+  }
+
+  renderCalendarDay(rules);
+}
+
+function renderCalendarDay(monthRules) {
+  const panel = $("#cal-day");
+  panel.replaceChildren();
+
+  if (!state.calDay) {
+    panel.append(emptyBlock("Aucun jour sélectionné", "Touche un jour du calendrier pour voir le détail."));
+    return;
+  }
+
+  const day = Number(state.calDay.slice(-2));
+  const heading = document.createElement("p");
+  heading.className = "cal-day-head";
+  heading.textContent = capitalize(
+    new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${state.calDay}T12:00:00`))
+  );
+  panel.append(heading);
+
+  const items = monthRules.filter((r) => r.jour === day);
+  if (!items.length) {
+    panel.append(emptyBlock("Rien ce jour-là", "Aucune dépense ni revenu récurrent prévu."));
+    return;
+  }
+
+  for (const rule of items.sort((a, b) => (a.type === b.type ? 0 : a.type === "revenu" ? -1 : 1))) {
+    const icon = iconFor(rule);
+    const row = document.createElement("div");
+    row.className = "cal-item";
+
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.style.setProperty("--c", icon.couleur);
+    chip.textContent = icon.mono;
+
+    const text = document.createElement("span");
+    text.className = "tx-t";
+    const name = document.createElement("b");
+    name.textContent = rule.libelle;
+    const sub = document.createElement("span");
+    sub.textContent = rule.type === "revenu" ? "Revenu récurrent" : (envById(rule.envelopeId)?.nom ?? "Dépense récurrente");
+    text.append(name, sub);
+
+    const amount = document.createElement("span");
+    amount.className = "tx-a " + (rule.type === "revenu" ? "is-income" : "is-expense");
+    amount.textContent = (rule.type === "revenu" ? "+" : "−") + money(rule.montant);
+
+    row.append(chip, text, amount);
+    panel.append(row);
+  }
+}
+
+/** Liste de gestion (Réglages ↔ onglet Récurrent) filtrée par type. */
+function renderRecurringList(type, listId, emptyTitle, emptySub) {
+  const list = $(listId);
+  list.replaceChildren();
+
+  const rules = recurringRules(type).sort((a, b) => a.jour - b.jour);
+  if (!rules.length) {
+    list.append(emptyBlock(emptyTitle, emptySub));
+    return;
+  }
+
+  for (const rule of rules) {
+    const icon = iconFor(rule);
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "tx" + (rule.actif ? "" : " is-paused");
+    row.dataset.recurring = rule.id;
+
+    const chip = document.createElement("span");
+    chip.className = "chip chip-sm";
+    chip.style.setProperty("--c", icon.couleur);
+    chip.textContent = icon.mono;
+
+    const text = document.createElement("span");
+    text.className = "tx-t";
+    const name = document.createElement("b");
+    name.textContent = rule.libelle;
+    const sub = document.createElement("span");
+    const where = type === "revenu" ? "Revenu" : (envById(rule.envelopeId)?.nom ?? "");
+    sub.textContent = rule.actif ? `${where} · le ${rule.jour}` : `${where} · en pause`;
+    text.append(name, sub);
+
+    const amount = document.createElement("span");
+    amount.className = "tx-a " + (type === "revenu" ? "is-income" : "is-expense");
+    amount.textContent = (type === "revenu" ? "+" : "−") + money(rule.montant);
+
+    row.append(chip, text, amount);
+    row.setAttribute("aria-label", `${rule.libelle}, ${money(rule.montant)}, ${sub.textContent}`);
+    list.append(row);
+  }
 }
 
 /* ---------------------------------------------------------- feuilles */
@@ -429,15 +841,20 @@ function closeSheets() {
   disarmAll();
 }
 
-function openTxSheet(tx) {
+/**
+ * @param {object|null} tx    dépense à modifier, ou null pour une création
+ * @param {{montantText?:string, envId?:string, libelle?:string}|null} prefill
+ *   valeurs de départ pour une création déclenchée depuis le raccourci Apple
+ */
+function openTxSheet(tx, prefill = null) {
   state.editingTx = tx ? tx.id : null;
   const first = envelopes()[0];
   if (!first) return toast("Crée d'abord une enveloppe.");
 
-  state.draftEnv = tx ? tx.envelopeId : first.id;
+  state.draftEnv = tx ? tx.envelopeId : (prefill?.envId ?? first.id);
   $("#tx-title").textContent = tx ? "Modifier la dépense" : "Nouvelle dépense";
-  $("#tx-amount").value = tx ? String(tx.montant / 100).replace(".", ",") : "";
-  $("#tx-label").value = tx ? tx.libelle : "";
+  $("#tx-amount").value = tx ? String(tx.montant / 100).replace(".", ",") : (prefill?.montantText ?? "");
+  $("#tx-label").value = tx ? tx.libelle : (prefill?.libelle ?? "");
   $("#tx-date").value = tx ? tx.date : todayIso();
   $("#tx-amount-error").hidden = true;
   $("#tx-delete").hidden = !tx;
@@ -457,7 +874,8 @@ function openTxSheet(tx) {
   }
 
   openSheet("#sheet-tx");
-  if (!tx) setTimeout(() => $("#tx-amount").focus(), 320);
+  // un montant déjà rempli n'a pas besoin du clavier ; sinon on le propose tout de suite
+  if (!tx && !prefill?.montantText) setTimeout(() => $("#tx-amount").focus(), 320);
 }
 
 function openEnvSheet(env) {
@@ -472,7 +890,9 @@ function openEnvSheet(env) {
 
   const picker = $("#env-colors");
   picker.replaceChildren();
-  for (const hex of COLORS) {
+  // une enveloppe créée avec une palette plus ancienne garde sa teinte dans le choix
+  const palette = COLORS.includes(state.draftColor) ? COLORS : [state.draftColor, ...COLORS];
+  for (const hex of palette) {
     const b = document.createElement("button");
     b.type = "button";
     b.role = "radio";
@@ -485,6 +905,101 @@ function openEnvSheet(env) {
   }
 
   openSheet("#sheet-env");
+}
+
+function openRecurringSheet(rule, defaultType = "depense") {
+  state.editingRecurring = rule ? rule.id : null;
+  state.draftRecurringType = rule ? rule.type : defaultType;
+  state.draftRecurringIcon = rule ? rule.icone : null;
+  state.draftRecurringActive = rule ? rule.actif : true;
+
+  const first = envelopes()[0];
+  state.draftRecurringEnv = rule ? rule.envelopeId : (first ? first.id : null);
+  if (state.draftRecurringType === "depense" && !first) return toast("Crée d'abord une enveloppe.");
+
+  $("#recurring-amount").value = rule ? String(rule.montant / 100).replace(".", ",") : "";
+  $("#recurring-label").value = rule ? rule.libelle : "";
+  $("#recurring-day").value = rule ? String(rule.jour) : "";
+  $("#recurring-amount-error").hidden = true;
+  $("#recurring-label-error").hidden = true;
+  $("#recurring-day-error").hidden = true;
+  $("#recurring-delete").hidden = !rule;
+
+  const picker = $("#recurring-env-picker");
+  picker.replaceChildren();
+  for (const env of envelopes()) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.role = "radio";
+    b.dataset.pick = env.id;
+    b.textContent = env.nom;
+    b.style.setProperty("--c", env.couleur);
+    b.classList.toggle("on", env.id === state.draftRecurringEnv);
+    b.setAttribute("aria-checked", String(env.id === state.draftRecurringEnv));
+    picker.append(b);
+  }
+
+  for (const b of document.querySelectorAll("#recurring-state button")) {
+    const on = (b.dataset.active === "1") === state.draftRecurringActive;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+
+  updateRecurringTypeUI(Boolean(rule));
+  openSheet("#sheet-recurring");
+  if (!rule) setTimeout(() => $("#recurring-amount").focus(), 320);
+}
+
+/** Bascule l'enveloppe (masquée pour un revenu), le titre et la liste de modèles selon le type choisi. */
+function updateRecurringTypeUI(editing) {
+  for (const b of document.querySelectorAll("#recurring-type button")) {
+    const on = b.dataset.type === state.draftRecurringType;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+  $("#recurring-env-block").hidden = state.draftRecurringType === "revenu";
+
+  const revenu = state.draftRecurringType === "revenu";
+  $("#recurring-title").textContent = editing
+    ? revenu
+      ? "Modifier le revenu récurrent"
+      : "Modifier la dépense récurrente"
+    : revenu
+      ? "Nouveau revenu récurrent"
+      : "Nouvelle dépense récurrente";
+
+  renderIconPicker();
+}
+
+function renderIconPicker() {
+  const picker = $("#recurring-icon-picker");
+  picker.replaceChildren();
+
+  const none = document.createElement("button");
+  none.type = "button";
+  none.role = "radio";
+  none.dataset.icon = "";
+  none.className = "icon-chip is-generic";
+  none.textContent = "?";
+  none.classList.toggle("on", !state.draftRecurringIcon);
+  none.setAttribute("aria-label", "Aucun modèle");
+  none.setAttribute("aria-checked", String(!state.draftRecurringIcon));
+  picker.append(none);
+
+  for (const preset of ICON_PRESETS.filter((p) => p.type === state.draftRecurringType)) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.role = "radio";
+    b.dataset.icon = preset.id;
+    b.className = "icon-chip";
+    b.style.setProperty("--c", preset.couleur ?? "var(--positive)");
+    b.textContent = preset.mono;
+    const on = state.draftRecurringIcon === preset.id;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-label", preset.nom);
+    b.setAttribute("aria-checked", String(on));
+    picker.append(b);
+  }
 }
 
 /* ---------------------------------------------------------- confirmation en deux temps
@@ -562,8 +1077,7 @@ function importData(file) {
     try {
       const data = JSON.parse(String(reader.result));
       if (!isSane(data)) throw new Error("format");
-      data.settings = data.settings || { theme: "auto" };
-      state.data = data;
+      state.data = normalizeData(data);
       state.filterEnv = null;
       save();
       render();
@@ -578,12 +1092,28 @@ function importData(file) {
 
 /* ---------------------------------------------------------- événements */
 
+function clearFocus() {
+  state.focusSlice = null;
+  state.focusSticky = false;
+}
+
 $("#prev-month").addEventListener("click", () => {
   state.month = shiftMonth(state.month, -1);
+  clearFocus();
+  state.calDay = null;
   render();
 });
 $("#next-month").addEventListener("click", () => {
   state.month = shiftMonth(state.month, 1);
+  clearFocus();
+  state.calDay = null;
+  render();
+});
+
+$("#cal-grid").addEventListener("click", (e) => {
+  const cell = e.target.closest("[data-day]");
+  if (!cell) return;
+  state.calDay = state.calDay === cell.dataset.day ? null : cell.dataset.day;
   render();
 });
 
@@ -592,6 +1122,52 @@ $("#tabbar").addEventListener("click", (e) => {
   if (!btn) return;
   state.view = btn.dataset.view;
   if (state.view !== "depenses") state.filterEnv = null;
+  clearFocus();
+  render();
+});
+
+/* Le graphique : on sélectionne une part au doigt, on la survole à la
+   souris. Les deux passent par le même état, donc la barre et la
+   légende restent toujours d'accord. */
+function toggleSlice(id, sticky) {
+  if (sticky) {
+    // un second appui sur la même part la désélectionne
+    const off = state.focusSticky && state.focusSlice === id;
+    state.focusSlice = off ? null : id;
+    state.focusSticky = !off;
+  } else {
+    state.focusSlice = id;
+    state.focusSticky = false;
+  }
+  render();
+}
+
+for (const id of ["#chart-bar", "#pie-svg", "#repartition"]) {
+  $(id).addEventListener("click", (e) => {
+    const target = e.target.closest("[data-slice]");
+    if (target) toggleSlice(target.dataset.slice, true);
+  });
+}
+
+for (const id of ["#chart-bar", "#pie-svg"]) {
+  $(id).addEventListener("pointerover", (e) => {
+    if (e.pointerType !== "mouse" || state.focusSticky) return;
+    const seg = e.target.closest("[data-slice]");
+    if (seg && seg.dataset.slice !== state.focusSlice) toggleSlice(seg.dataset.slice, false);
+  });
+
+  $(id).addEventListener("pointerleave", (e) => {
+    if (e.pointerType !== "mouse" || state.focusSticky || !state.focusSlice) return;
+    clearFocus();
+    render();
+  });
+}
+
+$("#chart-mode").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-chart]");
+  if (!btn) return;
+  state.data.settings.chart = btn.dataset.chart;
+  save();
   render();
 });
 
@@ -721,15 +1297,147 @@ $("#env-form").addEventListener("submit", (e) => {
 
 $("#env-delete").addEventListener("click", (e) => {
   const count = state.data.expenses.filter((t) => t.envelopeId === state.editingEnv).length;
-  const question = count ? `Supprimer aussi ses ${count} dépenses ?` : "Confirmer la suppression ?";
+  const recurringCount = state.data.recurring.filter((r) => r.envelopeId === state.editingEnv).length;
+  const parts = [];
+  if (count) parts.push(`${count} dépense${count > 1 ? "s" : ""}`);
+  if (recurringCount) parts.push(`${recurringCount} dépense${recurringCount > 1 ? "s" : ""} récurrente${recurringCount > 1 ? "s" : ""}`);
+  const question = parts.length ? `Supprimer aussi ${parts.join(" et ")} ?` : "Confirmer la suppression ?";
   armDanger(e.currentTarget, question, () => {
     state.data.envelopes = state.data.envelopes.filter((x) => x.id !== state.editingEnv);
     state.data.expenses = state.data.expenses.filter((t) => t.envelopeId !== state.editingEnv);
+    state.data.recurring = state.data.recurring.filter((r) => r.envelopeId !== state.editingEnv);
     if (state.filterEnv === state.editingEnv) state.filterEnv = null;
     save();
     closeSheets();
     render();
     toast("Enveloppe supprimée.");
+  });
+});
+
+$("#recurring-add").addEventListener("click", () => openRecurringSheet(null, "depense"));
+$("#income-add").addEventListener("click", () => openRecurringSheet(null, "revenu"));
+
+for (const id of ["#recurring-list", "#income-list"]) {
+  $(id).addEventListener("click", (e) => {
+    const row = e.target.closest("[data-recurring]");
+    if (!row) return;
+    const rule = state.data.recurring.find((r) => r.id === row.dataset.recurring);
+    if (rule) openRecurringSheet(rule);
+  });
+}
+
+$("#recurring-type").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-type]");
+  if (!btn || btn.dataset.type === state.draftRecurringType) return;
+  state.draftRecurringType = btn.dataset.type;
+  state.draftRecurringIcon = null; // les modèles ne sont pas les mêmes d'un type à l'autre
+  if (state.draftRecurringType === "depense" && !state.draftRecurringEnv) {
+    const first = envelopes()[0];
+    if (!first) {
+      state.draftRecurringType = "revenu"; // on ne peut pas basculer vers dépense sans enveloppe
+      updateRecurringTypeUI(Boolean(state.editingRecurring)); // sinon le bouton resterait affiché sur "Dépense"
+      return toast("Crée d'abord une enveloppe.");
+    }
+    state.draftRecurringEnv = first.id;
+  }
+  updateRecurringTypeUI(Boolean(state.editingRecurring));
+});
+
+$("#recurring-icon-picker").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-icon]");
+  if (!btn) return;
+  state.draftRecurringIcon = btn.dataset.icon || null;
+  const preset = ICON_PRESETS.find((p) => p.id === state.draftRecurringIcon);
+  if (preset && !$("#recurring-label").value.trim()) $("#recurring-label").value = preset.nom;
+  renderIconPicker();
+});
+
+$("#recurring-env-picker").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-pick]");
+  if (!btn) return;
+  state.draftRecurringEnv = btn.dataset.pick;
+  for (const b of $("#recurring-env-picker").children) {
+    const on = b === btn;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+});
+
+$("#recurring-state").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-active]");
+  if (!btn) return;
+  state.draftRecurringActive = btn.dataset.active === "1";
+  for (const b of $("#recurring-state").children) {
+    const on = b === btn;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+});
+
+$("#recurring-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const cents = parseAmount($("#recurring-amount").value);
+  $("#recurring-amount-error").hidden = cents !== null;
+
+  const libelle = $("#recurring-label").value.trim();
+  $("#recurring-label-error").hidden = Boolean(libelle);
+
+  const jour = Number.parseInt($("#recurring-day").value, 10);
+  const jourValid = Number.isInteger(jour) && jour >= 1 && jour <= 28;
+  $("#recurring-day-error").hidden = jourValid;
+
+  const type = state.draftRecurringType;
+  if (cents === null) return $("#recurring-amount").focus();
+  if (!libelle) return $("#recurring-label").focus();
+  if (!jourValid) return $("#recurring-day").focus();
+  if (type === "depense" && !state.draftRecurringEnv) return toast("Crée d'abord une enveloppe.");
+
+  const editing = Boolean(state.editingRecurring);
+  const payload = {
+    type,
+    montant: cents,
+    libelle,
+    jour,
+    actif: state.draftRecurringActive,
+    icone: state.draftRecurringIcon,
+    envelopeId: type === "depense" ? state.draftRecurringEnv : null,
+  };
+
+  if (editing) {
+    Object.assign(state.data.recurring.find((r) => r.id === state.editingRecurring), payload);
+  } else {
+    state.data.recurring.push({ id: uid(), createdAt: Date.now(), ...payload });
+  }
+
+  save();
+  closeSheets();
+  // un jour déjà passé ce mois-ci (création, réactivation, ou jour avancé) se rattrape tout de suite
+  const created = generateRecurring();
+  render();
+
+  const label = type === "revenu" ? "Revenu récurrent" : "Dépense récurrente";
+  if (editing) toast(created ? "Modifié — le mois en cours est à jour." : `${label} modifié${type === "revenu" ? "" : "e"}.`);
+  else
+    toast(
+      created
+        ? `« ${libelle} » ajouté${type === "revenu" ? "" : "e"} à ce mois-ci, puis chaque mois le ${jour}.`
+        : `« ${libelle} » reviendra chaque mois le ${jour}.`
+    );
+});
+
+$("#recurring-delete").addEventListener("click", (e) => {
+  const rule = state.data.recurring.find((r) => r.id === state.editingRecurring);
+  const isRevenu = rule?.type === "revenu";
+  armDanger(e.currentTarget, "Confirmer la suppression ?", () => {
+    state.data.recurring = state.data.recurring.filter((r) => r.id !== state.editingRecurring);
+    save();
+    closeSheets();
+    render();
+    toast(
+      isRevenu
+        ? "Revenu récurrent supprimé. Les montants déjà générés restent dans l'historique."
+        : "Dépense récurrente supprimée. Les dépenses déjà générées restent dans l'historique."
+    );
   });
 });
 
@@ -740,6 +1448,17 @@ for (const btn of document.querySelectorAll("[data-theme-set]")) {
     render();
   });
 }
+
+$("#shortcut-copy").addEventListener("click", async () => {
+  const value = $("#shortcut-link").value;
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("Lien copié.");
+  } catch {
+    $("#shortcut-link").select();
+    toast("Lien sélectionné — copie avec ⌘C.");
+  }
+});
 
 $("#export-btn").addEventListener("click", exportData);
 $("#import-btn").addEventListener("click", () => $("#import-file").click());
@@ -760,9 +1479,44 @@ $("#reset-btn").addEventListener("click", (e) => {
   });
 });
 
+/* ---------------------------------------------------------- raccourci Apple
+   Une URL comme ?ajouter=1&montant=12,50&env=Courses, ouverte par un
+   raccourci Raccourcis (bouton Action, tapotement arrière…), ouvre
+   directement le tiroir « Nouvelle dépense » plutôt que d'ajouter la
+   dépense sans confirmation : le montant peut être faux (photo floue
+   du reçu, presse-papiers périmé…) et la catégorie n'est jamais devinable
+   depuis un simple montant. */
+
+function matchEnvelope(raw) {
+  if (!raw) return null;
+  const byId = envById(raw);
+  if (byId) return byId;
+  const norm = (s) => s.trim().toLowerCase();
+  return envelopes().find((e) => norm(e.nom) === norm(raw)) ?? null;
+}
+
+function consumeShortcutLink() {
+  const params = new URLSearchParams(location.search);
+  if (params.get("ajouter") !== "1") return;
+
+  const cents = parseAmount(params.get("montant") ?? "");
+  const env = matchEnvelope(params.get("env"));
+
+  // la dépense n'est pas encore enregistrée : rien à perdre à nettoyer l'URL tout de suite
+  history.replaceState(null, "", location.pathname + location.hash);
+
+  openTxSheet(null, {
+    montantText: cents !== null ? String(cents / 100).replace(".", ",") : "",
+    envId: env?.id,
+    libelle: params.get("libelle") ?? "",
+  });
+}
+
 /* ---------------------------------------------------------- démarrage */
 
 render();
+if (generateRecurring()) render();
+consumeShortcutLink();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", () => {
