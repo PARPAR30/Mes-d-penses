@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Mon Budget</title>
 <meta name="description" content="Budget et dépenses par enveloppes. Tout reste sur cet appareil.">
 <meta name="theme-color" content="#F4F5F7" media="(prefers-color-scheme: light)">
@@ -26,10 +26,10 @@
     <button class="month-nav" id="prev-month" type="button" aria-label="Mois précédent">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
     </button>
-    <div class="month-label">
-      <h1 id="month-name">Septembre</h1>
-      <p id="month-year">2026</p>
-    </div>
+    <button class="month-label" id="month-label" type="button">
+      <span class="month-name" id="month-name">Septembre</span>
+      <span class="month-year" id="month-year">2026</span>
+    </button>
     <button class="month-nav" id="next-month" type="button" aria-label="Mois suivant">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
     </button>
@@ -44,6 +44,21 @@
         <p class="total-figure" id="total-figure">0,00 €</p>
         <div class="total-track" id="total-track" role="img" aria-label="Répartition des dépenses par enveloppe"></div>
         <p class="total-note" id="total-note"></p>
+
+        <div class="flow" id="flow" hidden>
+          <div>
+            <p class="flow-k">Revenus</p>
+            <p class="flow-v is-income" id="flow-in">0,00 €</p>
+          </div>
+          <div>
+            <p class="flow-k">Dépenses</p>
+            <p class="flow-v is-expense" id="flow-out">0,00 €</p>
+          </div>
+          <div>
+            <p class="flow-k">Solde</p>
+            <p class="flow-v" id="flow-net">0,00 €</p>
+          </div>
+        </div>
       </div>
 
       <div class="section-head">
@@ -60,6 +75,11 @@
         <span id="filter-label"></span>
         <button class="chip-x" id="clear-filter" type="button" aria-label="Retirer le filtre">✕</button>
       </div>
+      <div class="search" id="search-bar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+        <input id="tx-search" type="search" autocomplete="off" placeholder="Chercher un libellé, une enveloppe…" aria-label="Chercher dans les mouvements">
+        <button class="chip-x" id="clear-search" type="button" hidden aria-label="Effacer la recherche">✕</button>
+      </div>
       <div class="tx-list" id="tx-list"></div>
     </section>
 
@@ -69,6 +89,7 @@
         <p class="total-k">Dépensé ce mois-ci</p>
         <p class="total-figure" id="bilan-figure">0,00 €</p>
         <p class="total-note" id="bilan-compare"></p>
+        <p class="total-note" id="bilan-net" hidden></p>
       </div>
 
       <div class="section-head"><h2>Six derniers mois</h2></div>
@@ -159,7 +180,8 @@
 
       <div class="section-head"><h2>Installer sur l'iPhone</h2></div>
       <div class="card">
-        <p class="setting-note">Dans Safari : bouton <strong>Partager</strong>, puis <strong>Sur l'écran d'accueil</strong>. L'appli s'ouvre alors en plein écran et fonctionne sans connexion.</p>
+        <p class="setting-note">Dans Safari : bouton <strong>Partager</strong>, puis <strong>Sur l'écran d'accueil</strong>. L'appli s'ouvre alors en plein écran, fonctionne sans connexion, et la barre d'onglets n'est plus gênée par la barre d'outils de Safari.</p>
+        <p class="setting-stat" id="install-stat"></p>
       </div>
 
       <div class="section-head"><h2>Ajout rapide (Raccourcis)</h2></div>
@@ -190,28 +212,50 @@
 
   </main>
 
-  <button class="fab" id="fab" type="button" aria-label="Ajouter une dépense">
+  <button class="fab" id="fab" type="button" aria-label="Ajouter une dépense ou un revenu">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
   </button>
 
   <nav class="tabbar" id="tabbar" aria-label="Navigation principale">
-    <button type="button" data-view="accueil" class="on">Accueil</button>
-    <button type="button" data-view="depenses">Dépenses</button>
-    <button type="button" data-view="bilan">Bilan</button>
-    <button type="button" data-view="recurrent">Récurrent</button>
-    <button type="button" data-view="reglages">Réglages</button>
+    <span class="tab-pill" id="tab-pill" aria-hidden="true"></span>
+    <button type="button" data-view="accueil" class="on">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.7 12 4.3l8 6.4V19a1 1 0 0 1-1 1h-4.3v-5.7H9.3V20H5a1 1 0 0 1-1-1z"/></svg>
+      <span>Accueil</span>
+    </button>
+    <button type="button" data-view="depenses">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/></svg>
+      <span>Dépenses</span>
+    </button>
+    <button type="button" data-view="bilan">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 20V11M12 20V4.5M18.5 20v-6.5"/></svg>
+      <span>Bilan</span>
+    </button>
+    <button type="button" data-view="recurrent">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 12.8-5.3L20 9.2M20 4.7v4.5h-4.5M19.5 12a7.5 7.5 0 0 1-12.8 5.3L4 14.8M4 19.3v-4.5h4.5"/></svg>
+      <span>Récurrent</span>
+    </button>
+    <button type="button" data-view="reglages">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h7M15 7.5h5M4 16.5h4M12 16.5h8"/><circle cx="13" cy="7.5" r="2.2"/><circle cx="10" cy="16.5" r="2.2"/></svg>
+      <span>Réglages</span>
+    </button>
   </nav>
 </div>
 
-<!-- ======== feuille : dépense ======== -->
+<!-- ======== feuille : dépense ou revenu ponctuel ======== -->
 <div class="scrim" id="scrim" hidden></div>
 
 <div class="sheet" id="sheet-tx" hidden role="dialog" aria-modal="true" aria-labelledby="tx-title">
+  <div class="sheet-grip" aria-hidden="true"></div>
   <form id="tx-form" novalidate>
     <div class="sheet-head">
       <button class="sheet-close" type="button" data-close aria-label="Fermer">✕</button>
       <h2 id="tx-title">Nouvelle dépense</h2>
       <button class="sheet-save" type="submit">OK</button>
+    </div>
+
+    <div class="seg" id="tx-type" role="radiogroup" aria-label="Type">
+      <button type="button" data-type="depense" role="radio">Dépense</button>
+      <button type="button" data-type="revenu" role="radio">Revenu</button>
     </div>
 
     <label class="amount-field">
@@ -221,8 +265,10 @@
     </label>
     <p class="field-error" id="tx-amount-error" hidden>Entre un montant, par exemple 12,50.</p>
 
-    <p class="field-label">Enveloppe</p>
-    <div class="env-picker" id="tx-env-picker" role="radiogroup" aria-label="Enveloppe"></div>
+    <div id="tx-env-block">
+      <p class="field-label">Enveloppe</p>
+      <div class="env-picker" id="tx-env-picker" role="radiogroup" aria-label="Enveloppe"></div>
+    </div>
 
     <label class="field">
       <span class="field-label">Libellé</span>
@@ -234,12 +280,13 @@
       <input id="tx-date" type="date" required>
     </label>
 
-    <button class="btn btn-danger" id="tx-delete" type="button" hidden>Supprimer cette dépense</button>
+    <button class="btn btn-danger" id="tx-delete" type="button" hidden>Supprimer</button>
   </form>
 </div>
 
 <!-- ======== feuille : enveloppe ======== -->
 <div class="sheet" id="sheet-env" hidden role="dialog" aria-modal="true" aria-labelledby="env-title">
+  <div class="sheet-grip" aria-hidden="true"></div>
   <form id="env-form" novalidate>
     <div class="sheet-head">
       <button class="sheet-close" type="button" data-close aria-label="Fermer">✕</button>
@@ -270,6 +317,7 @@
 
 <!-- ======== feuille : dépense ou revenu récurrent ======== -->
 <div class="sheet" id="sheet-recurring" hidden role="dialog" aria-modal="true" aria-labelledby="recurring-title">
+  <div class="sheet-grip" aria-hidden="true"></div>
   <form id="recurring-form" novalidate>
     <div class="sheet-head">
       <button class="sheet-close" type="button" data-close aria-label="Fermer">✕</button>

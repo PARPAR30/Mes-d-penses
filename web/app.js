@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "1.6.1";
+const APP_VERSION = "1.7.0";
 
 /* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
    prend la teinte suivante, jamais une couleur tirée au hasard.
@@ -106,9 +106,16 @@ function parseAmount(raw) {
 const amountMeasurer = document.createElement("canvas").getContext("2d");
 function sizeAmountInput(input) {
   if (!amountMeasurer) return; // environnement sans canvas : la largeur CSS par défaut prend le relais
-  amountMeasurer.font = getComputedStyle(input).font;
+  /* getComputedStyle(...).font renvoie une chaîne VIDE dès qu'une des
+     propriétés couvertes par le raccourci n'y est pas représentable —
+     ici font-variant-numeric:tabular-nums. Le canevas retombait alors sur
+     son « 10px sans-serif » par défaut, mesurait ~20 px pour « 0,00 » et
+     rabotait le champ à un seul chiffre. On compose donc la fonte à la main. */
+  const style = getComputedStyle(input);
+  amountMeasurer.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
   const text = input.value || input.placeholder;
   const width = amountMeasurer.measureText(text).width;
+  if (!width) return; // mesure impossible : la largeur CSS par défaut vaut mieux qu'une fausse
   input.style.width = `${Math.min(width + 4, window.innerWidth * 0.6)}px`;
 }
 
@@ -130,15 +137,19 @@ function monthName(key, style = "long") {
   return capitalize(new Intl.DateTimeFormat("fr-FR", { month: style }).format(new Date(y, m - 1, 1)));
 }
 
+/** « mardi 1er septembre » : en français, seul le premier du mois est ordinal. */
+function longDate(d) {
+  const s = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" }).format(d);
+  return d.getDate() === 1 ? s.replace(" 1 ", " 1er ") : s;
+}
+
 function dayHeading(iso) {
   if (iso === todayIso()) return "Aujourd'hui";
   const d = new Date(iso + "T12:00:00");
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   if (iso === isoDay(yesterday)) return "Hier";
-  return capitalize(
-    new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" }).format(d)
-  );
+  return capitalize(longDate(d));
 }
 
 /* ---------------------------------------------------------- données */
@@ -198,15 +209,18 @@ const state = {
   month: todayIso().slice(0, 7),
   view: "accueil",
   filterEnv: null,
+  query: "",
   focusSlice: null,
   focusSticky: false,
   calDay: null,
   managing: false,
   editingTx: null,
+  editingTxType: "depense",
   editingEnv: null,
   editingRecurring: null,
   draftColor: COLORS[0],
   draftEnv: null,
+  draftTxType: "depense",
   draftRecurringEnv: null,
   draftRecurringActive: true,
   draftRecurringType: "depense",
@@ -218,6 +232,7 @@ const state = {
 const envelopes = () => [...state.data.envelopes].sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0));
 const envById = (id) => state.data.envelopes.find((e) => e.id === id);
 const expensesOf = (month) => state.data.expenses.filter((t) => monthOf(t.date) === month);
+const incomesOf = (month) => state.data.incomes.filter((t) => monthOf(t.date) === month);
 
 function spentByEnv(month) {
   const totals = Object.create(null);
@@ -227,6 +242,7 @@ function spentByEnv(month) {
 
 const totalBudget = () => envelopes().reduce((sum, e) => sum + e.budget, 0);
 const totalSpent = (month) => expensesOf(month).reduce((sum, t) => sum + t.montant, 0);
+const totalIncome = (month) => incomesOf(month).reduce((sum, t) => sum + t.montant, 0);
 
 function daysLeft(month) {
   const now = new Date();
@@ -283,10 +299,18 @@ function render() {
   document.documentElement.dataset.theme = state.data.settings.theme;
   if (state.data.settings.theme === "auto") delete document.documentElement.dataset.theme;
 
-  $("#month-name").textContent = monthName(state.month);
-  $("#month-year").textContent = state.month.slice(0, 4);
-  $("#topbar").hidden = state.view === "reglages";
-  $("#fab").hidden = state.view === "reglages";
+  // la barre du haut reste en place d'une vue à l'autre : elle porte le
+  // mois là où il a un sens, et le titre de la vue là où il n'en a pas
+  const reglages = state.view === "reglages";
+  const thisMonth = todayIso().slice(0, 7);
+  $("#topbar").classList.toggle("no-nav", reglages);
+  $("#month-name").textContent = reglages ? "Réglages" : monthName(state.month);
+  $("#month-year").textContent = reglages
+    ? "Cet appareil"
+    : state.month === thisMonth
+      ? state.month.slice(0, 4)
+      : "Revenir au mois en cours";
+  $("#fab").hidden = reglages;
 
   for (const el of document.querySelectorAll(".view")) el.hidden = el.id !== `view-${state.view}`;
   for (const b of document.querySelectorAll(".tabbar button")) b.classList.toggle("on", b.dataset.view === state.view);
@@ -296,6 +320,22 @@ function render() {
   if (state.view === "bilan") renderBilan();
   if (state.view === "recurrent") renderRecurrent();
   if (state.view === "reglages") renderReglages();
+
+  positionTabPill();
+}
+
+/* La pastille de l'onglet actif est posée d'après la largeur réelle des
+   boutons : les libellés n'ont pas tous la même longueur, une position
+   calculée en pourcentages tomberait à côté. */
+function positionTabPill() {
+  const pill = $("#tab-pill");
+  const active = $(".tabbar button.on");
+  if (!pill || !active) return;
+  const width = active.offsetWidth;
+  if (!width) return; // barre pas encore mesurable : on repassera au prochain rendu
+  pill.style.width = `${width}px`;
+  pill.style.transform = `translateX(${active.offsetLeft}px)`;
+  pill.classList.add("ready");
 }
 
 function renderAccueil() {
@@ -324,6 +364,19 @@ function renderAccueil() {
   const parts = [`sur ${money(budget)}`];
   if (rest !== null) parts.push(rest === 0 ? "dernier jour du mois" : `${rest} jour${rest > 1 ? "s" : ""} restant${rest > 1 ? "s" : ""}`);
   $("#total-note").textContent = parts.join(" · ");
+
+  // sans revenu saisi, la ligne n'afficherait que des zéros : on ne la
+  // montre qu'à partir du premier revenu du mois
+  const income = totalIncome(state.month);
+  const hasIncome = incomesOf(state.month).length > 0;
+  $("#flow").hidden = !hasIncome;
+  if (hasIncome) {
+    const net = income - spent;
+    $("#flow-in").textContent = `+${money(income)}`;
+    $("#flow-out").textContent = `−${money(spent)}`;
+    $("#flow-net").textContent = `${net < 0 ? "−" : "+"}${money(Math.abs(net))}`;
+    $("#flow-net").className = `flow-v ${net < 0 ? "is-expense" : "is-income"}`;
+  }
 
   $("#toggle-manage").textContent = state.managing ? "Terminé" : "Gérer";
   $("#toggle-manage").classList.toggle("on", state.managing);
@@ -408,16 +461,37 @@ function renderDepenses() {
   const filter = state.filterEnv ? envById(state.filterEnv) : null;
   $("#filter-bar").hidden = !filter;
   if (filter) $("#filter-label").textContent = `Enveloppe : ${filter.nom}`;
+  $("#clear-search").hidden = !state.query;
 
-  let items = expensesOf(state.month);
-  if (filter) items = items.filter((t) => t.envelopeId === filter.id);
+  // dépenses et revenus du mois dans une seule liste chronologique :
+  // c'est ici qu'on lit ce qui est réellement passé sur le compte
+  let items = [
+    ...expensesOf(state.month).map((t) => ({ ...t, kind: "depense" })),
+    ...incomesOf(state.month).map((t) => ({ ...t, kind: "revenu" })),
+  ];
+
+  // un filtre d'enveloppe ne s'applique qu'aux dépenses : un revenu n'en a pas
+  if (filter) items = items.filter((t) => t.kind === "depense" && t.envelopeId === filter.id);
+
+  const query = state.query.trim().toLowerCase();
+  if (query) {
+    items = items.filter((t) => {
+      const where = t.kind === "revenu" ? "revenu" : envById(t.envelopeId)?.nom ?? "";
+      return `${t.libelle ?? ""} ${where}`.toLowerCase().includes(query);
+    });
+  }
+
   items.sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : b.date.localeCompare(a.date)));
 
   if (!items.length) {
     list.append(
       emptyBlock(
-        "Rien pour ce mois-ci",
-        filter ? "Aucune dépense dans cette enveloppe." : "Touche le bouton + pour noter une dépense."
+        query ? "Rien trouvé" : "Rien pour ce mois-ci",
+        query
+          ? "Aucun mouvement ne correspond à cette recherche."
+          : filter
+            ? "Aucune dépense dans cette enveloppe."
+            : "Touche le bouton + pour noter une dépense ou un revenu."
       )
     );
     return;
@@ -433,27 +507,30 @@ function renderDepenses() {
       list.append(head);
     }
 
-    const env = envById(tx.envelopeId);
+    const revenu = tx.kind === "revenu";
+    const env = revenu ? null : envById(tx.envelopeId);
     const row = document.createElement("button");
     row.type = "button";
     row.className = "tx";
     row.dataset.tx = tx.id;
+    row.dataset.kind = tx.kind;
 
     const dot = document.createElement("span");
     dot.className = "tx-dot";
-    dot.style.setProperty("--c", env ? env.couleur : "#9AA0AC");
+    dot.style.setProperty("--c", revenu ? "var(--positive)" : env ? env.couleur : "#9AA0AC");
 
     const text = document.createElement("span");
     text.className = "tx-t";
     const label = document.createElement("b");
-    label.textContent = (tx.recurringId ? "↻ " : "") + (tx.libelle || (env ? env.nom : "Dépense"));
+    label.textContent =
+      (tx.recurringId ? "↻ " : "") + (tx.libelle || (revenu ? "Revenu" : env ? env.nom : "Dépense"));
     const sub = document.createElement("span");
-    sub.textContent = env ? env.nom : "Sans enveloppe";
+    sub.textContent = revenu ? "Revenu" : env ? env.nom : "Sans enveloppe";
     text.append(label, sub);
 
     const amount = document.createElement("span");
-    amount.className = "tx-a is-expense";
-    amount.textContent = `−${money(tx.montant)}`;
+    amount.className = `tx-a ${revenu ? "is-income" : "is-expense"}`;
+    amount.textContent = `${revenu ? "+" : "−"}${money(tx.montant)}`;
 
     row.append(dot, text, amount);
     list.append(row);
@@ -476,6 +553,15 @@ function renderBilan() {
         : `${Math.abs(delta)} % ${sense} qu'en ${monthName(prevKey).toLowerCase()} (${money(prev)}).`;
   }
   $("#bilan-compare").textContent = compare;
+
+  const income = totalIncome(state.month);
+  const hasIncome = incomesOf(state.month).length > 0;
+  $("#bilan-net").hidden = !hasIncome;
+  if (hasIncome) {
+    const net = income - spent;
+    $("#bilan-net").textContent =
+      `Revenus +${money(income)} · solde ${net < 0 ? "−" : "+"}${money(Math.abs(net))}`;
+  }
 
   const keys = [];
   for (let i = 5; i >= 0; i--) keys.push(shiftMonth(state.month, -i));
@@ -667,6 +753,9 @@ function renderReglages() {
   $("#data-stat").textContent =
     `${n} dépense${n > 1 ? "s" : ""} · ${inc} revenu${inc > 1 ? "s" : ""} · ${e} enveloppe${e > 1 ? "s" : ""} · ${r} récurrente${r > 1 ? "s" : ""} · modifié le ${when}`;
   $("#version").textContent = `Mon Budget ${APP_VERSION}`;
+  $("#install-stat").textContent = isStandalone()
+    ? "Ouverte depuis l'écran d'accueil — plein écran, hors connexion."
+    : "Ouverte dans le navigateur : installe-la pour gagner la place de la barre d'outils.";
 
   // un fichier local (double-clic), ou l'appli de bureau sur son hôte interne,
   // n'a pas d'adresse qu'un raccourci sur un autre appareil puisse rouvrir
@@ -751,9 +840,7 @@ function renderCalendarDay(monthRules) {
   const day = Number(state.calDay.slice(-2));
   const heading = document.createElement("p");
   heading.className = "cal-day-head";
-  heading.textContent = capitalize(
-    new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${state.calDay}T12:00:00`))
-  );
+  heading.textContent = capitalize(longDate(new Date(`${state.calDay}T12:00:00`)));
   panel.append(heading);
 
   const items = monthRules.filter((r) => r.jour === day);
@@ -833,8 +920,19 @@ function renderRecurringList(type, listId, emptyTitle, emptySub) {
 
 /* ---------------------------------------------------------- feuilles */
 
+/* Un seul minuteur partagé pour toute la fermeture : avec un minuteur
+   par tiroir, rouvrir dans les 280 ms qui suivaient une fermeture faisait
+   masquer le tiroir tout juste ouvert par le minuteur encore en vol. */
+let closeTimer;
+
 function openSheet(id) {
+  clearTimeout(closeTimer);
   $("#scrim").hidden = false;
+  for (const other of document.querySelectorAll(".sheet")) {
+    if (other.id === id.slice(1)) continue;
+    other.classList.remove("show");
+    other.hidden = true;
+  }
   const sheet = $(id);
   sheet.hidden = false;
   requestAnimationFrame(() => {
@@ -844,29 +942,31 @@ function openSheet(id) {
 }
 
 function closeSheets() {
+  clearTimeout(closeTimer);
   $("#scrim").classList.remove("show");
-  for (const sheet of document.querySelectorAll(".sheet")) {
-    sheet.classList.remove("show");
-    setTimeout(() => {
-      sheet.hidden = true;
-      $("#scrim").hidden = true;
-    }, 280);
-  }
+  for (const sheet of document.querySelectorAll(".sheet")) sheet.classList.remove("show");
+  closeTimer = setTimeout(() => {
+    for (const sheet of document.querySelectorAll(".sheet")) sheet.hidden = true;
+    $("#scrim").hidden = true;
+  }, 280);
   disarmAll();
 }
 
 /**
- * @param {object|null} tx    dépense à modifier, ou null pour une création
+ * @param {object|null} tx    mouvement à modifier, ou null pour une création
  * @param {{montantText?:string, envId?:string, libelle?:string}|null} prefill
  *   valeurs de départ pour une création déclenchée depuis le raccourci Apple
+ * @param {"depense"|"revenu"} type  nature du mouvement (à donner aussi en modification)
  */
-function openTxSheet(tx, prefill = null) {
+function openTxSheet(tx, prefill = null, type = "depense") {
   state.editingTx = tx ? tx.id : null;
-  const first = envelopes()[0];
-  if (!first) return toast("Crée d'abord une enveloppe.");
+  state.editingTxType = tx ? type : null;
+  state.draftTxType = type;
 
-  state.draftEnv = tx ? tx.envelopeId : (prefill?.envId ?? first.id);
-  $("#tx-title").textContent = tx ? "Modifier la dépense" : "Nouvelle dépense";
+  const first = envelopes()[0];
+  if (type === "depense" && !first) return toast("Crée d'abord une enveloppe.");
+
+  state.draftEnv = tx && type === "depense" ? tx.envelopeId : (prefill?.envId ?? first?.id ?? null);
   $("#tx-amount").value = tx ? String(tx.montant / 100).replace(".", ",") : (prefill?.montantText ?? "");
   sizeAmountInput($("#tx-amount"));
   $("#tx-label").value = tx ? tx.libelle : (prefill?.libelle ?? "");
@@ -874,6 +974,15 @@ function openTxSheet(tx, prefill = null) {
   $("#tx-amount-error").hidden = true;
   $("#tx-delete").hidden = !tx;
 
+  renderTxEnvPicker();
+  updateTxTypeUI(Boolean(tx));
+
+  openSheet("#sheet-tx");
+  // un montant déjà rempli n'a pas besoin du clavier ; sinon on le propose tout de suite
+  if (!tx && !prefill?.montantText) setTimeout(() => $("#tx-amount").focus(), 320);
+}
+
+function renderTxEnvPicker() {
   const picker = $("#tx-env-picker");
   picker.replaceChildren();
   for (const env of envelopes()) {
@@ -887,10 +996,30 @@ function openTxSheet(tx, prefill = null) {
     b.setAttribute("aria-checked", String(env.id === state.draftEnv));
     picker.append(b);
   }
+}
 
-  openSheet("#sheet-tx");
-  // un montant déjà rempli n'a pas besoin du clavier ; sinon on le propose tout de suite
-  if (!tx && !prefill?.montantText) setTimeout(() => $("#tx-amount").focus(), 320);
+/** Un revenu n'a pas d'enveloppe : le sélecteur disparaît et le titre change.
+    En modification, le sélecteur de type disparaît aussi — changer la nature
+    d'un mouvement déjà noté reviendrait à le déplacer d'une liste à l'autre. */
+function updateTxTypeUI(editing) {
+  const revenu = state.draftTxType === "revenu";
+  for (const b of document.querySelectorAll("#tx-type button")) {
+    const on = b.dataset.type === state.draftTxType;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+  $("#tx-type").hidden = editing;
+  $("#tx-env-block").hidden = revenu;
+  $("#tx-label").placeholder = revenu ? "Salaire, remboursement, prime…" : "Monoprix, essence, resto…";
+  $("#tx-title").textContent = editing
+    ? revenu
+      ? "Modifier le revenu"
+      : "Modifier la dépense"
+    : revenu
+      ? "Nouveau revenu"
+      : "Nouvelle dépense";
+  $("#tx-delete").textContent = revenu ? "Supprimer ce revenu" : "Supprimer cette dépense";
+  $("#tx-delete").dataset.idle = $("#tx-delete").textContent;
 }
 
 function openEnvSheet(env) {
@@ -1142,6 +1271,38 @@ $("#tabbar").addEventListener("click", (e) => {
   render();
 });
 
+// le titre du mois ramène au mois en cours quand on s'en est éloigné
+$("#month-label").addEventListener("click", () => {
+  const now = todayIso().slice(0, 7);
+  if (state.month === now || state.view === "reglages") return;
+  state.month = now;
+  clearFocus();
+  state.calDay = null;
+  render();
+});
+
+$("#tx-search").addEventListener("input", (e) => {
+  state.query = e.target.value;
+  renderDepenses();
+});
+$("#clear-search").addEventListener("click", () => {
+  state.query = "";
+  $("#tx-search").value = "";
+  renderDepenses();
+});
+
+$("#tx-type").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-type]");
+  if (!btn || btn.dataset.type === state.draftTxType) return;
+  if (btn.dataset.type === "depense" && !envelopes().length) return toast("Crée d'abord une enveloppe.");
+  state.draftTxType = btn.dataset.type;
+  updateTxTypeUI(false);
+});
+
+// la pastille est mesurée en pixels : elle doit être replacée quand la
+// largeur de la barre change (rotation de l'écran, redimensionnement)
+window.addEventListener("resize", positionTabPill);
+
 /* Le graphique : on sélectionne une part au doigt, on la survole à la
    souris. Les deux passent par le même état, donc la barre et la
    légende restent toujours d'accord. */
@@ -1202,6 +1363,8 @@ $("#env-list").addEventListener("click", (e) => {
   if (!env) return;
   if (state.managing) return openEnvSheet(env);
   state.filterEnv = env.id;
+  state.query = "";
+  $("#tx-search").value = "";
   state.view = "depenses";
   render();
 });
@@ -1209,8 +1372,10 @@ $("#env-list").addEventListener("click", (e) => {
 $("#tx-list").addEventListener("click", (e) => {
   const row = e.target.closest("[data-tx]");
   if (!row) return;
-  const tx = state.data.expenses.find((t) => t.id === row.dataset.tx);
-  if (tx) openTxSheet(tx);
+  const kind = row.dataset.kind === "revenu" ? "revenu" : "depense";
+  const source = kind === "revenu" ? state.data.incomes : state.data.expenses;
+  const tx = source.find((t) => t.id === row.dataset.tx);
+  if (tx) openTxSheet(tx, null, kind);
 });
 
 $("#clear-filter").addEventListener("click", () => {
@@ -1256,20 +1421,28 @@ $("#tx-form").addEventListener("submit", (e) => {
   $("#tx-amount-error").hidden = cents !== null;
   if (cents === null) return $("#tx-amount").focus();
 
+  const revenu = state.draftTxType === "revenu";
+  const target = revenu ? state.data.incomes : state.data.expenses;
   const payload = {
-    envelopeId: state.draftEnv,
     montant: cents,
     libelle: $("#tx-label").value.trim(),
     date: $("#tx-date").value || todayIso(),
   };
+  if (!revenu) payload.envelopeId = state.draftEnv;
 
   if (state.editingTx) {
-    const tx = state.data.expenses.find((t) => t.id === state.editingTx);
-    Object.assign(tx, payload);
-    toast("Dépense modifiée.");
+    Object.assign(
+      target.find((t) => t.id === state.editingTx),
+      payload
+    );
+    toast(revenu ? "Revenu modifié." : "Dépense modifiée.");
   } else {
-    state.data.expenses.push({ id: uid(), createdAt: Date.now(), ...payload });
-    toast(`${money(cents)} noté dans ${envById(payload.envelopeId)?.nom ?? "l'enveloppe"}.`);
+    target.push({ id: uid(), createdAt: Date.now(), ...payload });
+    toast(
+      revenu
+        ? `${money(cents)} noté en revenu.`
+        : `${money(cents)} noté dans ${envById(payload.envelopeId)?.nom ?? "l'enveloppe"}.`
+    );
   }
 
   state.month = monthOf(payload.date);
@@ -1279,12 +1452,14 @@ $("#tx-form").addEventListener("submit", (e) => {
 });
 
 $("#tx-delete").addEventListener("click", (e) => {
+  const revenu = state.editingTxType === "revenu";
   armDanger(e.currentTarget, "Confirmer la suppression ?", () => {
-    state.data.expenses = state.data.expenses.filter((t) => t.id !== state.editingTx);
+    if (revenu) state.data.incomes = state.data.incomes.filter((t) => t.id !== state.editingTx);
+    else state.data.expenses = state.data.expenses.filter((t) => t.id !== state.editingTx);
     save();
     closeSheets();
     render();
-    toast("Dépense supprimée.");
+    toast(revenu ? "Revenu supprimé." : "Dépense supprimée.");
   });
 });
 
@@ -1534,9 +1709,34 @@ function consumeShortcutLink() {
 
 /* ---------------------------------------------------------- démarrage */
 
+/* Installée sur l'écran d'accueil, l'appli occupe tout l'écran ; ouverte
+   dans Safari, la barre d'outils du navigateur mord sur le bas — la barre
+   d'onglets doit alors remonter d'autant pour rester atteignable. */
+function isStandalone() {
+  return window.matchMedia?.("(display-mode: standalone)").matches === true || navigator.standalone === true;
+}
+document.documentElement.dataset.standalone = isStandalone() ? "1" : "0";
+
 render();
 if (generateRecurring()) render();
 consumeShortcutLink();
+// les boutons d'onglet ne sont mesurables qu'une fois la mise en page faite
+requestAnimationFrame(positionTabPill);
+
+/* Une PWA iPhone n'est pas rechargée entre deux ouvertures : sans ça,
+   rouverte le mois suivant, elle afficherait encore le mois précédent et
+   n'aurait tamponné aucune échéance entre-temps. */
+let lastSeenDay = todayIso();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  const today = todayIso();
+  if (today === lastSeenDay) return;
+  const wasOnCurrentMonth = state.month === lastSeenDay.slice(0, 7);
+  lastSeenDay = today;
+  if (wasOnCurrentMonth) state.month = today.slice(0, 7);
+  generateRecurring();
+  render();
+});
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", () => {

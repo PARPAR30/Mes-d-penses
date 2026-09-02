@@ -1,6 +1,6 @@
 # Mon Budget
 
-Suivi de budget et de dépenses par **enveloppes** : un poste, un budget mensuel, une jauge qui se remplit au fil du mois.
+Suivi de budget et de dépenses par **enveloppes** : un poste, un budget mensuel, une jauge qui se remplit au fil du mois. Les revenus se notent de la même façon, ponctuels ou récurrents, et l'accueil affiche le solde réel du mois.
 
 Un seul code source pour trois usages :
 
@@ -68,7 +68,7 @@ Les paquets desktop se construisent sur le PC (ou le Mac), pas sur GitHub : `bui
 | | |
 |---|---|
 | Où | `localStorage`, clé `mon-budget/v1` |
-| Quoi | enveloppes (nom, couleur, budget mensuel) et dépenses (montant, libellé, date) |
+| Quoi | enveloppes (nom, couleur, budget mensuel), dépenses et revenus (montant, libellé, date), règles récurrentes |
 | Montants | stockés en **centimes** (entiers), jamais en nombres à virgule |
 | Transfert | Réglages → **Exporter** produit un `.json` ; **Importer** le relit sur un autre appareil |
 
@@ -78,7 +78,7 @@ Rien n'est envoyé sur Internet — il n'y a aucun serveur. Effacer les données
 
 ```
 web/                  le site — c'est aussi le contenu des apps desktop
-  index.html          squelette des quatre vues
+  index.html          squelette des cinq vues
   styles.css          direction « pièce » : plate, filets plutôt qu'ombres, thème clair + sombre
   app.js              état, stockage, rendu, interactions
   manifest.webmanifest / sw.js    installation et mode hors-ligne
@@ -99,6 +99,24 @@ Les icônes sont dessinées par code, pas éditées à la main. Pour changer la 
 ```bash
 npm run icons
 ```
+
+## Deux pièges déjà tombés dedans
+
+**`hidden` ne masque rien si la CSS déclare un `display`.** Les navigateurs
+posent `[hidden]{display:none}` depuis leur feuille par défaut, donc avec la
+plus faible priorité de la cascade : une règle d'auteur comme
+`.view{display:flex}` l'écrase et l'élément reste affiché. C'est ce qui
+empilait les cinq vues sur une seule page interminable. D'où le garde-fou
+`[hidden]{display:none !important}` en tête de `styles.css` — à ne pas retirer.
+À noter : **jsdom ne reproduit pas ce bug** (il traite `hidden` à part), aucun
+test DOM ne pouvait donc l'attraper.
+
+**`getComputedStyle(el).font` peut renvoyer une chaîne vide.** Le raccourci
+`font` n'est pas sérialisable dès qu'une propriété qu'il couvre n'y est pas
+représentable — `font-variant-numeric:tabular-nums` par exemple. Le canevas qui
+mesure le champ montant retombait alors sur `10px sans-serif` et rabotait le
+champ à un chiffre. On compose la fonte à la main (`fontWeight`, `fontSize`,
+`fontFamily`).
 
 ## Après une modification de `web/`
 

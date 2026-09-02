@@ -1,6 +1,6 @@
 [package]
 name = "mon-budget"
-version = "1.6.1"
+version = "1.7.0"
 description = "Budget et dépenses par enveloppes — 100% local"
 edition = "2021"
 
