@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "1.6.0";
+const APP_VERSION = "1.6.1";
 
 /* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
    prend la teinte suivante, jamais une couleur tirée au hasard.
@@ -96,6 +96,20 @@ function parseAmount(raw) {
   const value = Number.parseFloat(cleaned);
   if (!Number.isFinite(value) || value <= 0) return null;
   return Math.round(value * 100);
+}
+
+/* Un <input> ne rétrécit pas sur son contenu : une largeur fixe + texte
+   aligné à droite laisse un vide invisible à gauche des chiffres courts
+   ("12,50" dans une boîte de 220 px), qui décale visuellement tout le
+   groupe montant + € par rapport au centre réel du tiroir. On mesure
+   donc le texte affiché et on ajuste la largeur de la boîte dessus. */
+const amountMeasurer = document.createElement("canvas").getContext("2d");
+function sizeAmountInput(input) {
+  if (!amountMeasurer) return; // environnement sans canvas : la largeur CSS par défaut prend le relais
+  amountMeasurer.font = getComputedStyle(input).font;
+  const text = input.value || input.placeholder;
+  const width = amountMeasurer.measureText(text).width;
+  input.style.width = `${Math.min(width + 4, window.innerWidth * 0.6)}px`;
 }
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -854,6 +868,7 @@ function openTxSheet(tx, prefill = null) {
   state.draftEnv = tx ? tx.envelopeId : (prefill?.envId ?? first.id);
   $("#tx-title").textContent = tx ? "Modifier la dépense" : "Nouvelle dépense";
   $("#tx-amount").value = tx ? String(tx.montant / 100).replace(".", ",") : (prefill?.montantText ?? "");
+  sizeAmountInput($("#tx-amount"));
   $("#tx-label").value = tx ? tx.libelle : (prefill?.libelle ?? "");
   $("#tx-date").value = tx ? tx.date : todayIso();
   $("#tx-amount-error").hidden = true;
@@ -918,6 +933,7 @@ function openRecurringSheet(rule, defaultType = "depense") {
   if (state.draftRecurringType === "depense" && !first) return toast("Crée d'abord une enveloppe.");
 
   $("#recurring-amount").value = rule ? String(rule.montant / 100).replace(".", ",") : "";
+  sizeAmountInput($("#recurring-amount"));
   $("#recurring-label").value = rule ? rule.libelle : "";
   $("#recurring-day").value = rule ? String(rule.jour) : "";
   $("#recurring-amount-error").hidden = true;
@@ -1207,6 +1223,10 @@ for (const btn of document.querySelectorAll("[data-close]")) btn.addEventListene
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeSheets();
 });
+
+for (const id of ["#tx-amount", "#recurring-amount"]) {
+  $(id).addEventListener("input", () => sizeAmountInput($(id)));
+}
 
 $("#tx-env-picker").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-pick]");
