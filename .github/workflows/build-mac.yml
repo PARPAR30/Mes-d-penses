@@ -1,8 +1,8 @@
 name: Build macOS DMG
 
+# manuel uniquement : les paquets desktop se construisent sur le PC
+# (npm run build), pas automatiquement sur GitHub à chaque push
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:

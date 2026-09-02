@@ -59,7 +59,7 @@ npm run build
 
 Résultats dans `src-tauri/target/release/bundle/` (`nsis/*.exe` et `msi/*.msi` sous Windows, `dmg/*.dmg` sous macOS).
 
-Le `.dmg` ne peut être construit que sur un Mac — d'où le workflow `build-mac.yml`, qui le fabrique sur les serveurs GitHub (binaire universel Intel + Apple Silicon). Le `.exe` a son équivalent dans `build-windows.yml`. Les deux déposent le paquet dans les **artefacts** du run, à télécharger depuis l'onglet Actions.
+Les paquets desktop se construisent sur le PC (ou le Mac), pas sur GitHub : `build-windows.yml` et `build-mac.yml` existent mais ne se déclenchent plus automatiquement à chaque push — uniquement à la demande, depuis l'onglet **Actions → sélectionner le workflow → Run workflow**, si besoin d'un `.dmg` sans avoir de Mac sous la main.
 
 > Pour compiler en local il faut Rust (`rustup`) et, sous Windows, les *Build Tools* Visual Studio avec la charge de travail C++.
 
