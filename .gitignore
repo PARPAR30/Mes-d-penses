@@ -3,6 +3,7 @@ package-lock.json
 src-tauri/target/
 src-tauri/gen/
 src-tauri/Cargo.lock
+tests/navigateur/.tmp/
 *.log
 .DS_Store
 Thumbs.db

@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "1.7.0";
+const APP_VERSION = "1.8.0";
 
 /* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
    prend la teinte suivante, jamais une couleur tirée au hasard.
@@ -87,13 +87,33 @@ const $ = (sel) => document.querySelector(sel);
 const eur = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
 const money = (cents) => eur.format(cents / 100);
 
+/* Centimes -> texte du champ montant : « 31,50 », mais « 850 » pour un euro
+   rond. String(31.5) donnait « 31,5 » : sur le chiffre principal de l'ecran,
+   un montant en euros s'ecrit avec ses deux decimales ou pas du tout. */
+const toInput = (cents) => {
+  const euros = cents / 100;
+  return (Number.isInteger(euros) ? String(euros) : euros.toFixed(2)).replace(".", ",");
+};
+
 const uid = () =>
   crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-/** "12,50" | "12.5" | "12,50 €" -> 1250. Renvoie null si illisible. */
+/** "12,50" | "12.5" | "1 234,56" | "1.234,56" | "12,50 €" -> centimes. Renvoie null si illisible.
+
+   Un montant recopié depuis un relevé ou un mail porte souvent DEUX séparateurs :
+   « 1.234,56 » (usage français) ou « 1,234.56 » (usage anglais). En ne remplaçant
+   que la première virgule, on lisait « 1.234,56 » comme 1,23 € — une erreur d'un
+   facteur mille, silencieuse. Règle appliquée : quand les deux caractères sont
+   présents, le DERNIER rencontré est la décimale et l'autre marque les milliers.
+   Un séparateur unique reste la décimale, comme avant (« 12,50 », « 12.50 »),
+   et « 1.234 » demeure ambigu — on ne devine pas. */
 function parseAmount(raw) {
-  const cleaned = String(raw).replace(/\s/g, "").replace(/[^\d.,-]/g, "").replace(",", ".");
-  const value = Number.parseFloat(cleaned);
+  let text = String(raw).replace(/\s/g, "").replace(/[^\d.,-]/g, "");
+  const cut = Math.max(text.lastIndexOf(","), text.lastIndexOf("."));
+  const both = text.includes(",") && text.includes(".");
+  if (both) text = text.slice(0, cut).replace(/[.,]/g, "") + "." + text.slice(cut + 1);
+  else text = text.replace(",", ".");
+  const value = Number.parseFloat(text);
   if (!Number.isFinite(value) || value <= 0) return null;
   return Math.round(value * 100);
 }
@@ -112,11 +132,21 @@ function sizeAmountInput(input) {
      son « 10px sans-serif » par défaut, mesurait ~20 px pour « 0,00 » et
      rabotait le champ à un seul chiffre. On compose donc la fonte à la main. */
   const style = getComputedStyle(input);
-  amountMeasurer.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  const base = Number.parseFloat(input.dataset.baseSize || style.fontSize);
+  input.dataset.baseSize = String(base);
+  amountMeasurer.font = `${style.fontWeight} ${base}px ${style.fontFamily}`;
   const text = input.value || input.placeholder;
   const width = amountMeasurer.measureText(text).width;
   if (!width) return; // mesure impossible : la largeur CSS par défaut vaut mieux qu'une fausse
-  input.style.width = `${Math.min(width + 4, window.innerWidth * 0.6)}px`;
+
+  /* Le texte est aligné à droite : trop long, il déborde par la GAUCHE et ce sont
+     les chiffres de tête qui sortent du champ — on lit 345,67 là où 12 345,67 est
+     saisi. Plutôt que rogner, on rétrécit la fonte jusqu'à ce que le montant tienne
+     (plancher à 22 px, en dessous ce n'est plus le chiffre principal de l'écran). */
+  const max = window.innerWidth * 0.6;
+  const size = width > max ? Math.max(22, Math.floor((base * max) / width)) : base;
+  input.style.fontSize = `${size}px`;
+  input.style.width = `${Math.min((width * size) / base + 4, max)}px`;
 }
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -143,13 +173,16 @@ function longDate(d) {
   return d.getDate() === 1 ? s.replace(" 1 ", " 1er ") : s;
 }
 
-function dayHeading(iso) {
+function dayHeading(iso, withYear = false) {
   if (iso === todayIso()) return "Aujourd'hui";
   const d = new Date(iso + "T12:00:00");
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   if (iso === isoDay(yesterday)) return "Hier";
-  return capitalize(longDate(d));
+  // « mardi 3 septembre » suffit dans un mois donné ; dans une recherche qui
+  // ratisse tout l'historique, il faut dire de quelle année on parle
+  const year = withYear && d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : "";
+  return capitalize(longDate(d)) + year;
 }
 
 /* ---------------------------------------------------------- données */
@@ -170,16 +203,109 @@ function isSane(d) {
   return d && Array.isArray(d.envelopes) && Array.isArray(d.expenses);
 }
 
-// une sauvegarde antérieure à la version 1.6 n'a ni « incomes », ni règle
-// avec un champ « type » ou « icone » : on comble en la lisant
+/* Assainissement à la lecture.
+
+   Le sauvetage n'est pas un luxe : une SEULE dépense sans date suffisait à faire
+   lever `t.date.slice(0,7)` dans expensesOf(), donc à interrompre tout le rendu.
+   L'accueil restait alors vide — définitivement, puisque la même sauvegarde est
+   relue à chaque ouverture. Un fichier importé (bricolé à la main, tronqué, écrit
+   par une version future) ne doit jamais pouvoir mettre l'appli dans cet état :
+   ce qui est lisible est gardé et réparé, ce qui ne l'est pas est écarté, et
+   l'import dit combien d'enregistrements il a dû laisser de côté. */
+
+let lastRepairCount = 0;
+
+const isMonth = (v) => typeof v === "string" && /^\d{4}-\d{2}$/.test(v);
+const isIsoDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+/** Entier de centimes positif, ou null. Accepte un nombre comme une saisie texte. */
+function cleanCents(v) {
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.round(v);
+  if (typeof v === "string") return parseAmount(v);
+  return null;
+}
+
+function cleanMovement(t, drop) {
+  const montant = cleanCents(t?.montant);
+  if (montant === null || !isIsoDate(t.date)) return drop();
+  return {
+    ...t,
+    id: typeof t.id === "string" && t.id ? t.id : uid(),
+    montant,
+    libelle: typeof t.libelle === "string" ? t.libelle.slice(0, 60) : "",
+    createdAt: Number.isFinite(t.createdAt) ? t.createdAt : 0,
+  };
+}
+
+// une sauvegarde antérieure à la version 1.6 n'a ni « incomes », ni règle avec un
+// champ « type » ou « icone » ; antérieure à 1.8, aucune règle n'a de mois de début
 function normalizeData(data) {
+  let dropped = 0;
+  const drop = () => { dropped++; return null; };
+  const keep = (x) => x !== null;
+
   data.settings = { theme: "auto", chart: "barre", ...data.settings };
-  data.incomes = Array.isArray(data.incomes) ? data.incomes : [];
-  data.recurring = (Array.isArray(data.recurring) ? data.recurring : []).map((r) => ({
-    type: "depense",
-    icone: null,
-    ...r,
-  }));
+  if (!["auto", "light", "dark"].includes(data.settings.theme)) data.settings.theme = "auto";
+  if (!["barre", "camembert"].includes(data.settings.chart)) data.settings.chart = "barre";
+
+  data.envelopes = (Array.isArray(data.envelopes) ? data.envelopes : [])
+    .map((e, i) => {
+      const nom = typeof e?.nom === "string" ? e.nom.trim().slice(0, 24) : "";
+      if (!nom) return drop();
+      return {
+        ...e,
+        id: typeof e.id === "string" && e.id ? e.id : uid(),
+        nom,
+        budget: cleanCents(e.budget) ?? 0,
+        couleur: /^#[0-9a-f]{6}$/i.test(e.couleur) ? e.couleur : COLORS[i % COLORS.length],
+        ordre: Number.isFinite(e.ordre) ? e.ordre : i,
+      };
+    })
+    .filter(keep);
+
+  const known = new Set(data.envelopes.map((e) => e.id));
+
+  data.expenses = (Array.isArray(data.expenses) ? data.expenses : [])
+    .map((t) => cleanMovement(t, drop))
+    .filter(keep)
+    // une dépense qui pointe une enveloppe disparue reste une dépense réelle :
+    // on la garde, sans enveloppe, plutôt que d'effacer une trace de l'historique
+    .map((t) => ({ ...t, envelopeId: known.has(t.envelopeId) ? t.envelopeId : null }));
+
+  data.incomes = (Array.isArray(data.incomes) ? data.incomes : [])
+    .map((t) => cleanMovement(t, drop))
+    .filter(keep);
+
+  data.recurring = (Array.isArray(data.recurring) ? data.recurring : [])
+    .map((r) => {
+      const montant = cleanCents(r?.montant);
+      const jour = Number.parseInt(r?.jour, 10);
+      if (montant === null || !Number.isInteger(jour)) return drop();
+      const type = r.type === "revenu" ? "revenu" : "depense";
+      return {
+        ...r,
+        id: typeof r.id === "string" && r.id ? r.id : uid(),
+        type,
+        montant,
+        jour: Math.min(28, Math.max(1, jour)),
+        libelle: typeof r.libelle === "string" && r.libelle.trim() ? r.libelle.trim().slice(0, 60) : "Sans nom",
+        actif: r.actif !== false,
+        icone: typeof r.icone === "string" ? r.icone : null,
+        envelopeId: type === "depense" && known.has(r.envelopeId) ? r.envelopeId : null,
+        // point de départ du rattrapage : jamais avant la création de la règle
+        debut: isMonth(r.debut) ? r.debut : monthOf(isoDay(new Date(r.createdAt || Date.now()))),
+        createdAt: Number.isFinite(r.createdAt) ? r.createdAt : 0,
+      };
+    })
+    .filter(keep)
+    // une règle de dépense sans enveloppe valide ne sait plus où imputer : elle est écartée
+    .filter((r) => {
+      if (r.type === "revenu" || r.envelopeId) return true;
+      drop();
+      return false;
+    });
+
+  lastRepairCount = dropped;
   return data;
 }
 
@@ -234,9 +360,19 @@ const envById = (id) => state.data.envelopes.find((e) => e.id === id);
 const expensesOf = (month) => state.data.expenses.filter((t) => monthOf(t.date) === month);
 const incomesOf = (month) => state.data.incomes.filter((t) => monthOf(t.date) === month);
 
+/* Identifiant de la part « Sans enveloppe » du bilan. Ce n'est pas une enveloppe :
+   c'est ce qui reste quand une dépense importée pointe une enveloppe disparue.
+   Sans elle, ces euros étaient comptés dans le total mais absents de la
+   répartition — les pourcentages ne faisaient plus 100 et le camembert restait
+   ouvert, sans que rien n'explique le trou. */
+const NO_ENV = "__sans-enveloppe__";
+
 function spentByEnv(month) {
   const totals = Object.create(null);
-  for (const t of expensesOf(month)) totals[t.envelopeId] = (totals[t.envelopeId] || 0) + t.montant;
+  for (const t of expensesOf(month)) {
+    const key = envById(t.envelopeId) ? t.envelopeId : NO_ENV;
+    totals[key] = (totals[key] || 0) + t.montant;
+  }
   return totals;
 }
 
@@ -251,12 +387,39 @@ function daysLeft(month) {
   return new Date(y, m, 0).getDate() - now.getDate();
 }
 
+/** Part fixe du mois : ce qui vient d'une règle récurrente — déjà tamponné, ou
+    encore à tomber d'ici la fin du mois. Elle est due, pas « au rythme de ». */
+function fixedSpend(month) {
+  const stamped = expensesOf(month).filter((t) => t.recurringId);
+  const done = new Set(stamped.map((t) => t.recurringId));
+  let total = stamped.reduce((n, t) => n + t.montant, 0);
+  for (const rule of recurringRules("depense")) if (rule.actif && !done.has(rule.id)) total += rule.montant;
+  return total;
+}
+
+/* Où en est le mois, et où en serait la dépense si elle continuait au même
+   rythme. « Il te reste 300 € » ne dit pas si c'est confortable ou si tout va
+   y passer avant le 20 : c'est la comparaison entre la part du mois écoulée et
+   la part du budget consommée qui le dit. */
+function monthPace(month) {
+  const [y, m] = month.split("-").map(Number);
+  const total = new Date(y, m, 0).getDate();
+  const current = month === todayIso().slice(0, 7);
+  const elapsed = current ? new Date().getDate() : total;
+  return { total, elapsed, ratio: elapsed / total, current };
+}
+
 /* ---------------------------------------------------------- dépenses récurrentes
    Une règle récurrente n'est qu'un modèle : elle « tamponne » une vraie
    dépense (avec recurringId pour la reconnaître) dès que le jour choisi
-   est atteint dans le mois réel en cours. Rien n'est jamais pré-rempli
-   pour un mois futur, et les mois manqués avant la création de la règle
-   ne sont jamais comblés — seul le mois réel courant est concerné. */
+   est atteint. Rien n'est jamais pré-rempli pour un mois futur, ni pour un
+   mois antérieur au champ « debut » de la règle. */
+
+/** Nombre de mois qu'un rattrapage peut remonter au maximum.
+    Sans ce plafond, importer une sauvegarde de trois ans ferait apparaître d'un
+    coup trente-six loyers dans l'historique. Un an couvre largement l'oubli
+    d'ouvrir l'appli pendant des vacances ou un changement de téléphone. */
+const MAX_BACKFILL = 12;
 
 /** Règles valides (revenu, ou dépense dont l'enveloppe existe encore), filtrables par type. */
 function recurringRules(type) {
@@ -265,32 +428,57 @@ function recurringRules(type) {
   );
 }
 
-/** Tamponne les règles actives dont le jour est atteint et pas encore générées ce mois-ci. Renvoie le nombre créé. */
+/* Une échéance manquée était une échéance perdue : l'appli ne tamponnait que le
+   mois réel courant. Un iPhone laissé de côté six semaines sautait donc un loyer,
+   et le bilan des mois précédents s'en trouvait faux pour toujours. On parcourt
+   maintenant tous les mois depuis « debut » — posé à la création de la règle, et
+   remis à aujourd'hui à chaque réactivation pour qu'une pause ne se rattrape pas. */
+
+/** Tamponne toutes les échéances dues et pas encore générées.
+    @returns {{created:number, backfilled:number}} total créé, dont mois passés. */
 function generateRecurring() {
-  const month = todayIso().slice(0, 7);
-  const day = new Date().getDate();
+  const thisMonth = todayIso().slice(0, 7);
+  const today = new Date().getDate();
+  const floor = shiftMonth(thisMonth, -MAX_BACKFILL);
   let created = 0;
+  let backfilled = 0;
 
   for (const rule of recurringRules()) {
-    if (!rule.actif || day < rule.jour) continue;
+    if (!rule.actif) continue;
     const target = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
-    const already = target.some((t) => t.recurringId === rule.id && monthOf(t.date) === month);
-    if (already) continue;
+    const done = new Set(target.filter((t) => t.recurringId === rule.id).map((t) => monthOf(t.date)));
 
-    const record = {
-      id: uid(),
-      montant: rule.montant,
-      libelle: rule.libelle,
-      date: `${month}-${pad(rule.jour)}`,
-      recurringId: rule.id,
-      createdAt: Date.now(),
-    };
-    if (rule.type === "revenu") state.data.incomes.push(record);
-    else state.data.expenses.push({ ...record, envelopeId: rule.envelopeId });
-    created++;
+    let month = rule.debut > floor ? rule.debut : floor;
+    while (month <= thisMonth) {
+      // le mois en cours n'est dû qu'une fois le jour atteint ; les mois passés le sont tous
+      const due = month < thisMonth || today >= rule.jour;
+      if (due && !done.has(month)) {
+        const record = {
+          id: uid(),
+          montant: rule.montant,
+          libelle: rule.libelle,
+          date: `${month}-${pad(rule.jour)}`,
+          recurringId: rule.id,
+          createdAt: Date.now(),
+        };
+        if (rule.type === "revenu") state.data.incomes.push(record);
+        else state.data.expenses.push({ ...record, envelopeId: rule.envelopeId });
+        created++;
+        if (month < thisMonth) backfilled++;
+      }
+      month = shiftMonth(month, 1);
+    }
   }
   if (created) save();
-  return created;
+  return { created, backfilled };
+}
+
+/** Message des échéances rattrapées, ou null s'il n'y a rien à dire. */
+function backfillMessage({ backfilled }) {
+  if (!backfilled) return null;
+  return backfilled > 1
+    ? `${backfilled} échéances rattrapées sur les mois passés.`
+    : "1 échéance rattrapée sur un mois passé.";
 }
 
 /* ---------------------------------------------------------- rendu */
@@ -351,19 +539,52 @@ function renderAccueil() {
   const track = $("#total-track");
   track.replaceChildren();
   const base = Math.max(budget, spent, 1);
-  for (const env of envelopes()) {
-    const part = perEnv[env.id] || 0;
+  const segments = [
+    ...envelopes().map((env) => ({ part: perEnv[env.id] || 0, couleur: env.couleur })),
+    { part: perEnv[NO_ENV] || 0, couleur: "var(--ink-3)" },
+  ];
+  for (const { part, couleur } of segments) {
     if (part <= 0) continue;
     const bar = document.createElement("i");
     bar.style.width = `${(part / base) * 100}%`;
-    bar.style.background = env.couleur;
+    bar.style.background = couleur;
     track.append(bar);
   }
+
+  const pace = monthPace(state.month);
+
+  /* Repère de rythme : le trait marque la dépense « à l'heure » du jour — la part
+     du budget qui correspond à la part du mois déjà passée. La couleur remplie
+     au-delà du trait se lit alors d'un coup d'œil comme une avance de dépense. */
+  const mark = document.createElement("i");
+  mark.className = "total-mark";
+  mark.style.left = `${Math.min((budget * pace.ratio) / base, 1) * 100}%`;
+  if (pace.current && budget > 0) track.append(mark);
 
   const rest = daysLeft(state.month);
   const parts = [`sur ${money(budget)}`];
   if (rest !== null) parts.push(rest === 0 ? "dernier jour du mois" : `${rest} jour${rest > 1 ? "s" : ""} restant${rest > 1 ? "s" : ""}`);
   $("#total-note").textContent = parts.join(" · ");
+
+  /* Avant une semaine, une projection n'en est pas une : au 3 du mois on
+     multiplie par dix ce qui a été dépensé, et le premier plein d'essence
+     annonce une fin de mois à trois mille euros. */
+  const showPace = pace.current && pace.elapsed >= 7 && spent > 0 && budget > 0;
+  $("#total-pace").hidden = !showPace;
+  if (showPace) {
+    /* Seule la part VARIABLE s'extrapole. Etaler le loyer paye le 3 sur les
+       trente jours du mois annonçait quatorze mille euros pour un budget de
+       mille sept cents : un chiffre faux fait plus de mal que pas de chiffre. */
+    const fixed = fixedSpend(state.month);
+    const variable = Math.max(spent - fixed, 0);
+    const projection = Math.max(spent, fixed + Math.round((variable / pace.elapsed) * pace.total));
+    const gap = projection - budget;
+    $("#total-pace").textContent =
+      gap > 0
+        ? `À ce rythme : ${money(projection)} en fin de mois, soit ${money(gap)} de trop.`
+        : `À ce rythme : ${money(projection)} en fin de mois, ${money(-gap)} sous le budget.`;
+    $("#total-pace").classList.toggle("is-over", gap > 0);
+  }
 
   // sans revenu saisi, la ligne n'afficherait que des zéros : on ne la
   // montre qu'à partir du premier revenu du mois
@@ -425,7 +646,35 @@ function renderAccueil() {
 
     row.append(head, foot, track);
     row.setAttribute("aria-label", `${env.nom}, ${amount.textContent} ${sub.textContent}, ${pct} % utilisés`);
-    list.append(row);
+
+    if (!state.managing) {
+      list.append(row);
+      continue;
+    }
+
+    /* En mode « Gérer », la rangée est flanquée de deux boutons d'ordre. Ils sont
+       posés à CÔTÉ du bouton d'enveloppe, jamais dedans : un bouton imbriqué dans
+       un autre est du HTML invalide, et le navigateur défait alors l'imbrication
+       en déplaçant les nœuds — la mise en page part en morceaux. */
+    const wrap = document.createElement("div");
+    wrap.className = "env-row";
+    const order = document.createElement("div");
+    order.className = "env-order";
+    const list_ = envelopes();
+    const at = list_.findIndex((e) => e.id === env.id);
+    for (const [dir, label] of [[-1, "Monter"], [1, "Descendre"]]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "env-move";
+      b.dataset.move = env.id;
+      b.dataset.dir = String(dir);
+      b.textContent = label;
+      b.disabled = at + dir < 0 || at + dir >= list_.length;
+      b.setAttribute("aria-label", `${label} ${env.nom}`);
+      order.append(b);
+    }
+    wrap.append(row, order);
+    list.append(wrap);
   }
 
   if (state.managing) {
@@ -463,32 +712,52 @@ function renderDepenses() {
   if (filter) $("#filter-label").textContent = `Enveloppe : ${filter.nom}`;
   $("#clear-search").hidden = !state.query;
 
-  // dépenses et revenus du mois dans une seule liste chronologique :
-  // c'est ici qu'on lit ce qui est réellement passé sur le compte
+  const query = state.query.trim().toLowerCase();
+
+  /* Une recherche porte sur TOUT l'historique, pas sur le seul mois affiché.
+     Chercher « boulangerie » et ne fouiller que septembre, c'est ne pas chercher :
+     on retrouvait une ligne sur deux sans jamais savoir que l'autre existait. */
+  const searching = Boolean(query);
+  const pool = searching
+    ? [state.data.expenses, state.data.incomes]
+    : [expensesOf(state.month), incomesOf(state.month)];
   let items = [
-    ...expensesOf(state.month).map((t) => ({ ...t, kind: "depense" })),
-    ...incomesOf(state.month).map((t) => ({ ...t, kind: "revenu" })),
+    ...pool[0].map((t) => ({ ...t, kind: "depense" })),
+    ...pool[1].map((t) => ({ ...t, kind: "revenu" })),
   ];
 
   // un filtre d'enveloppe ne s'applique qu'aux dépenses : un revenu n'en a pas
   if (filter) items = items.filter((t) => t.kind === "depense" && t.envelopeId === filter.id);
 
-  const query = state.query.trim().toLowerCase();
   if (query) {
     items = items.filter((t) => {
-      const where = t.kind === "revenu" ? "revenu" : envById(t.envelopeId)?.nom ?? "";
+      const where = t.kind === "revenu" ? "revenu" : envById(t.envelopeId)?.nom ?? "sans enveloppe";
       return `${t.libelle ?? ""} ${where}`.toLowerCase().includes(query);
     });
   }
 
   items.sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : b.date.localeCompare(a.date)));
 
+  // un filtre ou une recherche pose une question chiffrée (« combien chez eux ? ») :
+  // le total de ce qui est affiché est la réponse, il n'a pas à être fait de tête
+  const sum = $("#tx-sum");
+  sum.hidden = !(searching || filter) || !items.length;
+  if (!sum.hidden) {
+    const out = items.filter((t) => t.kind === "depense").reduce((n, t) => n + t.montant, 0);
+    const inc = items.filter((t) => t.kind === "revenu").reduce((n, t) => n + t.montant, 0);
+    const bits = [`${items.length} mouvement${items.length > 1 ? "s" : ""}`];
+    if (searching) bits[0] += " dans tout l'historique";
+    if (out) bits.push(`−${money(out)}`);
+    if (inc) bits.push(`+${money(inc)}`);
+    sum.textContent = bits.join(" · ");
+  }
+
   if (!items.length) {
     list.append(
       emptyBlock(
         query ? "Rien trouvé" : "Rien pour ce mois-ci",
         query
-          ? "Aucun mouvement ne correspond à cette recherche."
+          ? "Aucun mouvement de tout l'historique ne correspond à cette recherche."
           : filter
             ? "Aucune dépense dans cette enveloppe."
             : "Touche le bouton + pour noter une dépense ou un revenu."
@@ -503,7 +772,7 @@ function renderDepenses() {
       currentDay = tx.date;
       const head = document.createElement("p");
       head.className = "tx-day";
-      head.textContent = dayHeading(tx.date);
+      head.textContent = dayHeading(tx.date, searching);
       list.append(head);
     }
 
@@ -572,10 +841,15 @@ function renderBilan() {
   const labels = $("#hist-labels");
   hist.replaceChildren();
   labels.replaceChildren();
+  // les barres portaient un title= : illisible au doigt, et surtout inerte —
+  // le geste évident (toucher un mois pour l'ouvrir) ne faisait rien
   keys.forEach((key, i) => {
-    const bar = document.createElement("div");
-    bar.style.height = `${Math.max((totals[i] / max) * 100, 3)}%`;
+    const bar = document.createElement("button");
+    bar.type = "button";
+    bar.dataset.month = key;
+    bar.style.setProperty("--h", `${Math.max((totals[i] / max) * 100, 3)}%`);
     if (key === state.month) bar.classList.add("on");
+    bar.setAttribute("aria-label", `${monthName(key)} : ${money(totals[i])}`);
     bar.title = `${monthName(key)} : ${money(totals[i])}`;
     hist.append(bar);
 
@@ -598,8 +872,10 @@ function renderRepartition(total) {
   legend.replaceChildren();
 
   const perEnv = spentByEnv(state.month);
-  let rows = envelopes()
-    .map((e) => ({ id: e.id, nom: e.nom, couleur: e.couleur, value: perEnv[e.id] || 0 }))
+  let rows = [
+    ...envelopes().map((e) => ({ id: e.id, nom: e.nom, couleur: e.couleur, value: perEnv[e.id] || 0 })),
+    { id: NO_ENV, nom: "Sans enveloppe", couleur: null, value: perEnv[NO_ENV] || 0 },
+  ]
     .filter((r) => r.value > 0)
     .sort((a, b) => b.value - a.value);
 
@@ -963,16 +1239,25 @@ function openTxSheet(tx, prefill = null, type = "depense") {
   state.editingTxType = tx ? type : null;
   state.draftTxType = type;
 
+  /* Sans enveloppe, une dépense n'a nulle part où aller — mais un revenu, si.
+     Refuser tout net laissait l'appli sans issue : le bouton + ne faisait plus
+     rien du tout. On ouvre donc le tiroir côté revenu, en le disant. */
   const first = envelopes()[0];
-  if (type === "depense" && !first) return toast("Crée d'abord une enveloppe.");
+  if (type === "depense" && !first) {
+    if (tx) return toast("Crée d'abord une enveloppe.");
+    type = "revenu";
+    state.draftTxType = "revenu";
+    toast("Aucune enveloppe : crée-en une pour tes dépenses. En attendant, voici un revenu.");
+  }
 
   state.draftEnv = tx && type === "depense" ? tx.envelopeId : (prefill?.envId ?? first?.id ?? null);
-  $("#tx-amount").value = tx ? String(tx.montant / 100).replace(".", ",") : (prefill?.montantText ?? "");
+  $("#tx-amount").value = tx ? toInput(tx.montant) : (prefill?.montantText ?? "");
   sizeAmountInput($("#tx-amount"));
   $("#tx-label").value = tx ? tx.libelle : (prefill?.libelle ?? "");
   $("#tx-date").value = tx ? tx.date : todayIso();
   $("#tx-amount-error").hidden = true;
   $("#tx-delete").hidden = !tx;
+  $("#tx-duplicate").hidden = !tx;
 
   renderTxEnvPicker();
   updateTxTypeUI(Boolean(tx));
@@ -1028,7 +1313,7 @@ function openEnvSheet(env) {
 
   $("#env-title").textContent = env ? "Modifier l'enveloppe" : "Nouvelle enveloppe";
   $("#env-name").value = env ? env.nom : "";
-  $("#env-budget").value = env ? String(env.budget / 100).replace(".", ",") : "";
+  $("#env-budget").value = env ? toInput(env.budget) : "";
   $("#env-name-error").hidden = true;
   $("#env-delete").hidden = !env;
 
@@ -1061,7 +1346,7 @@ function openRecurringSheet(rule, defaultType = "depense") {
   state.draftRecurringEnv = rule ? rule.envelopeId : (first ? first.id : null);
   if (state.draftRecurringType === "depense" && !first) return toast("Crée d'abord une enveloppe.");
 
-  $("#recurring-amount").value = rule ? String(rule.montant / 100).replace(".", ",") : "";
+  $("#recurring-amount").value = rule ? toInput(rule.montant) : "";
   sizeAmountInput($("#recurring-amount"));
   $("#recurring-label").value = rule ? rule.libelle : "";
   $("#recurring-day").value = rule ? String(rule.jour) : "";
@@ -1224,9 +1509,19 @@ function importData(file) {
       if (!isSane(data)) throw new Error("format");
       state.data = normalizeData(data);
       state.filterEnv = null;
+      state.month = todayIso().slice(0, 7);
+      state.calDay = null;
+      const repaired = lastRepairCount;
       save();
+      generateRecurring();
       render();
-      toast(`Importé : ${data.expenses.length} dépenses.`);
+      // NB : le message d'import prime sur celui du rattrapage — l'utilisateur
+      // vient de faire un geste explicite, c'est de lui qu'on lui parle
+      toast(
+        repaired
+          ? `Importé : ${state.data.expenses.length} dépenses. ${repaired} enregistrement${repaired > 1 ? "s illisibles écartés" : " illisible écarté"}.`
+          : `Importé : ${state.data.expenses.length} dépenses.`
+      );
     } catch {
       toast("Fichier illisible : ce n'est pas une sauvegarde Mon Budget.");
     }
@@ -1242,18 +1537,16 @@ function clearFocus() {
   state.focusSticky = false;
 }
 
-$("#prev-month").addEventListener("click", () => {
-  state.month = shiftMonth(state.month, -1);
+function goToMonth(key) {
+  state.month = key;
   clearFocus();
   state.calDay = null;
+  disarmAll();
   render();
-});
-$("#next-month").addEventListener("click", () => {
-  state.month = shiftMonth(state.month, 1);
-  clearFocus();
-  state.calDay = null;
-  render();
-});
+}
+
+$("#prev-month").addEventListener("click", () => goToMonth(shiftMonth(state.month, -1)));
+$("#next-month").addEventListener("click", () => goToMonth(shiftMonth(state.month, 1)));
 
 $("#cal-grid").addEventListener("click", (e) => {
   const cell = e.target.closest("[data-day]");
@@ -1268,6 +1561,10 @@ $("#tabbar").addEventListener("click", (e) => {
   state.view = btn.dataset.view;
   if (state.view !== "depenses") state.filterEnv = null;
   clearFocus();
+  // « Tout effacer » vit dans une vue, pas dans un tiroir : sans ça il restait
+  // armé pendant qu'on regardait ailleurs, et un retour dans les cinq secondes
+  // suffisait à effacer le budget d'un seul appui
+  disarmAll();
   render();
 });
 
@@ -1275,10 +1572,7 @@ $("#tabbar").addEventListener("click", (e) => {
 $("#month-label").addEventListener("click", () => {
   const now = todayIso().slice(0, 7);
   if (state.month === now || state.view === "reglages") return;
-  state.month = now;
-  clearFocus();
-  state.calDay = null;
-  render();
+  goToMonth(now);
 });
 
 $("#tx-search").addEventListener("input", (e) => {
@@ -1340,6 +1634,11 @@ for (const id of ["#chart-bar", "#pie-svg"]) {
   });
 }
 
+$("#hist").addEventListener("click", (e) => {
+  const bar = e.target.closest("[data-month]");
+  if (bar && bar.dataset.month !== state.month) goToMonth(bar.dataset.month);
+});
+
 $("#chart-mode").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-chart]");
   if (!btn) return;
@@ -1355,7 +1654,23 @@ $("#toggle-manage").addEventListener("click", () => {
   render();
 });
 
+/** Échange une enveloppe avec sa voisine et renumérote tout le rang. */
+function moveEnvelope(id, dir) {
+  const order = envelopes();
+  const from = order.findIndex((e) => e.id === id);
+  const to = from + dir;
+  if (from < 0 || to < 0 || to >= order.length) return;
+  [order[from], order[to]] = [order[to], order[from]];
+  // renuméroter en entier plutôt qu'échanger deux « ordre » : une sauvegarde
+  // ancienne peut porter des valeurs en double, ou aucune
+  order.forEach((env, i) => { env.ordre = i; });
+  save();
+  render();
+}
+
 $("#env-list").addEventListener("click", (e) => {
+  const move = e.target.closest("[data-move]");
+  if (move) return moveEnvelope(move.dataset.move, Number(move.dataset.dir));
   if (e.target.closest("#env-add")) return openEnvSheet(null);
   const row = e.target.closest("[data-env]");
   if (!row) return;
@@ -1449,6 +1764,22 @@ $("#tx-form").addEventListener("submit", (e) => {
   save();
   closeSheets();
   render();
+});
+
+/* Dupliquer rouvre le tiroir en création, même montant, même enveloppe, même
+   libellé, mais daté d'aujourd'hui : c'est le geste de la dépense qui revient
+   sans être régulière au point de mériter une règle (le plein, la nounou…).
+   Rien n'est enregistré tant qu'on n'a pas validé — la date reste modifiable. */
+$("#tx-duplicate").addEventListener("click", () => {
+  const revenu = state.editingTxType === "revenu";
+  const source = revenu ? state.data.incomes : state.data.expenses;
+  const tx = source.find((t) => t.id === state.editingTx);
+  if (!tx) return;
+  openTxSheet(
+    null,
+    { montantText: toInput(tx.montant), envId: tx.envelopeId, libelle: tx.libelle },
+    revenu ? "revenu" : "depense"
+  );
 });
 
 $("#tx-delete").addEventListener("click", (e) => {
@@ -1588,6 +1919,7 @@ $("#recurring-form").addEventListener("submit", (e) => {
   if (type === "depense" && !state.draftRecurringEnv) return toast("Crée d'abord une enveloppe.");
 
   const editing = Boolean(state.editingRecurring);
+  const previous = editing ? state.data.recurring.find((r) => r.id === state.editingRecurring) : null;
   const payload = {
     type,
     montant: cents,
@@ -1598,16 +1930,19 @@ $("#recurring-form").addEventListener("submit", (e) => {
     envelopeId: type === "depense" ? state.draftRecurringEnv : null,
   };
 
-  if (editing) {
-    Object.assign(state.data.recurring.find((r) => r.id === state.editingRecurring), payload);
-  } else {
-    state.data.recurring.push({ id: uid(), createdAt: Date.now(), ...payload });
-  }
+  /* Point de départ du rattrapage. Une règle qui sort de pause repart
+     d'aujourd'hui : les mois passés en pause n'étaient pas dus, les tamponner
+     rétroactivement inventerait des dépenses qui n'ont jamais eu lieu. */
+  const thisMonth = todayIso().slice(0, 7);
+  payload.debut = previous && previous.actif && payload.actif ? previous.debut : thisMonth;
+
+  if (editing) Object.assign(previous, payload);
+  else state.data.recurring.push({ id: uid(), createdAt: Date.now(), ...payload });
 
   save();
   closeSheets();
   // un jour déjà passé ce mois-ci (création, réactivation, ou jour avancé) se rattrape tout de suite
-  const created = generateRecurring();
+  const { created } = generateRecurring();
   render();
 
   const label = type === "revenu" ? "Revenu récurrent" : "Dépense récurrente";
@@ -1701,7 +2036,7 @@ function consumeShortcutLink() {
   history.replaceState(null, "", location.pathname + location.hash);
 
   openTxSheet(null, {
-    montantText: cents !== null ? String(cents / 100).replace(".", ",") : "",
+    montantText: cents !== null ? toInput(cents) : "",
     envId: env?.id,
     libelle: params.get("libelle") ?? "",
   });
@@ -1717,11 +2052,25 @@ function isStandalone() {
 }
 document.documentElement.dataset.standalone = isStandalone() ? "1" : "0";
 
+/* Une sauvegarde abimee est reparee a la lecture, en memoire — mais tant qu'aucune
+   modification ne declenche d'ecriture, le fichier fautif reste sur le disque et
+   se fait rereparer a chaque ouverture. On le reecrit une bonne fois, pour que
+   l'export lui aussi parte propre. */
+if (lastRepairCount) save();
+
 render();
-if (generateRecurring()) render();
+const startup = generateRecurring();
+if (startup.created) render();
+const caughtUp = backfillMessage(startup);
+if (caughtUp) toast(caughtUp);
 consumeShortcutLink();
 // les boutons d'onglet ne sont mesurables qu'une fois la mise en page faite
 requestAnimationFrame(positionTabPill);
+
+/* Marqueur de fin d'initialisation, lu par les tests navigateur. Se fier au
+   HTML statique ne dirait rien : « 0,00 € » est deja ecrit dans index.html,
+   meme si le script n'a jamais tourne. */
+document.documentElement.dataset.appReady = "1";
 
 /* Une PWA iPhone n'est pas rechargée entre deux ouvertures : sans ça,
    rouverte le mois suivant, elle afficherait encore le mois précédent et
@@ -1734,14 +2083,56 @@ document.addEventListener("visibilitychange", () => {
   const wasOnCurrentMonth = state.month === lastSeenDay.slice(0, 7);
   lastSeenDay = today;
   if (wasOnCurrentMonth) state.month = today.slice(0, 7);
-  generateRecurring();
+  const caught = backfillMessage(generateRecurring());
   render();
+  if (caught) toast(caught);
+});
+
+/* Une appli posée sur l'écran d'accueil sert ses fichiers depuis son cache : une
+   version corrigée peut être en ligne depuis des jours sans que l'iPhone en sache
+   rien, puisqu'il ne recharge jamais la page de lui-même. Le service worker le
+   sait, lui — on le laisse le dire, avec le bouton qui va avec. */
+let updateAnnounced = false;
+function announceUpdate() {
+  if (updateAnnounced) return;
+  updateAnnounced = true;
+  $("#update-bar").hidden = false;
+  requestAnimationFrame(() => $("#update-bar").classList.add("show"));
+}
+
+$("#update-apply").addEventListener("click", () => location.reload());
+$("#update-dismiss").addEventListener("click", () => {
+  $("#update-bar").classList.remove("show");
+  setTimeout(() => ($("#update-bar").hidden = true), 260);
 });
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {
-      /* hors-ligne indisponible : l'appli fonctionne quand même */
+    // à la toute première visite il n'y a pas encore de contrôleur : la prise de
+    // relais qui suit est l'installation initiale, pas une mise à jour
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker
+      .register("sw.js")
+      .then((reg) => {
+        // « installed » alors qu'un service worker contrôle déjà la page : ce
+        // n'est pas la première installation, c'est une version plus récente
+        const watch = (worker) => {
+          if (!worker) return;
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) announceUpdate();
+          });
+        };
+        if (reg.waiting && navigator.serviceWorker.controller) announceUpdate();
+        watch(reg.installing);
+        reg.addEventListener("updatefound", () => watch(reg.installing));
+      })
+      .catch(() => {
+        /* hors-ligne indisponible : l'appli fonctionne quand même */
+      });
+    // sw.js appelle skipWaiting() : le nouveau worker prend la main sans passer
+    // par l'état « waiting », et c'est ce relais-là qui fait foi
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hadController) announceUpdate();
     });
   });
 }

@@ -35,7 +35,7 @@
     </button>
   </header>
 
-  <main class="views" id="views">
+  <main class="views">
 
     <!-- ======== accueil ======== -->
     <section class="view" id="view-accueil" aria-label="Accueil">
@@ -44,6 +44,7 @@
         <p class="total-figure" id="total-figure">0,00 €</p>
         <div class="total-track" id="total-track" role="img" aria-label="Répartition des dépenses par enveloppe"></div>
         <p class="total-note" id="total-note"></p>
+        <p class="total-pace" id="total-pace" hidden></p>
 
         <div class="flow" id="flow" hidden>
           <div>
@@ -75,11 +76,12 @@
         <span id="filter-label"></span>
         <button class="chip-x" id="clear-filter" type="button" aria-label="Retirer le filtre">✕</button>
       </div>
-      <div class="search" id="search-bar">
+      <div class="search">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
         <input id="tx-search" type="search" autocomplete="off" placeholder="Chercher un libellé, une enveloppe…" aria-label="Chercher dans les mouvements">
         <button class="chip-x" id="clear-search" type="button" hidden aria-label="Effacer la recherche">✕</button>
       </div>
+      <p class="tx-sum" id="tx-sum" hidden></p>
       <div class="tx-list" id="tx-list"></div>
     </section>
 
@@ -280,6 +282,7 @@
       <input id="tx-date" type="date" required>
     </label>
 
+    <button class="btn" id="tx-duplicate" type="button" hidden>Dupliquer</button>
     <button class="btn btn-danger" id="tx-delete" type="button" hidden>Supprimer</button>
   </form>
 </div>
@@ -366,6 +369,12 @@
 
     <button class="btn btn-danger" id="recurring-delete" type="button" hidden>Supprimer</button>
   </form>
+</div>
+
+<div class="update-bar" id="update-bar" role="status" aria-live="polite" hidden>
+  <span>Nouvelle version disponible.</span>
+  <button class="btn" id="update-apply" type="button">Recharger</button>
+  <button class="chip-x" id="update-dismiss" type="button" aria-label="Plus tard">✕</button>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>

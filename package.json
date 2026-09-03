@@ -1,6 +1,6 @@
 {
   "name": "mon-budget",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Budget et dépenses par enveloppes — 100% local (localStorage)",
   "private": true,
   "scripts": {
@@ -8,7 +8,9 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "icons": "node tools/make-icons.mjs",
-    "serve": "node tools/serve.mjs"
+    "serve": "node tools/serve.mjs",
+    "test": "node tests/navigateur/regressions.test.js",
+    "audit": "node tests/navigateur/audit.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4"

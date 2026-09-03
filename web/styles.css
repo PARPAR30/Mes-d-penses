@@ -138,10 +138,16 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 .month-name{display:block; font-size:17px; font-weight:600; line-height:1.2; letter-spacing:-.01em}
 .month-year{display:block; font-size:11px; color:var(--ink-2); letter-spacing:.06em}
 .month-label:active{opacity:.5}
+/* Zone d'appui.
+   Apple recommande 44x44 points au minimum ; plusieurs controles descendaient a
+   26 ou 32 px, ce qui se rate au pouce en marchant. La ou l'agrandissement
+   visuel abimerait la mise en page (fleches de mois, « Gerer », pastilles de
+   couleur), on garde le dessin et on elargit la seule zone d'appui, invisible. */
 .month-nav{
-  width:36px; height:36px; border-radius:var(--r-field); display:grid; place-items:center;
-  border:1px solid var(--line); background:var(--card); flex:none;
+  width:40px; height:40px; border-radius:var(--r-field); display:grid; place-items:center;
+  border:1px solid var(--line); background:var(--card); flex:none; position:relative;
 }
+.month-nav::before{content:""; position:absolute; inset:-4px}
 .month-nav:active{background:var(--field)}
 .month-nav svg{width:17px; height:17px; fill:none; stroke:var(--ink); stroke-width:2; stroke-linecap:round; stroke-linejoin:round}
 /* en Réglages il n'y a pas de mois à parcourir : on garde la place des
@@ -162,9 +168,22 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   letter-spacing:-.025em; line-height:1.05; font-variant-numeric:tabular-nums;
 }
 .total-figure.over{color:var(--danger)}
-.total-track{height:6px; border-radius:var(--r-bar); background:var(--field); overflow:hidden; display:flex; gap:2px}
+.total-track{
+  height:6px; border-radius:var(--r-bar); background:var(--field);
+  overflow:hidden; display:flex; gap:2px; position:relative;
+}
 .total-track i{display:block; height:100%; min-width:2px}
+/* Repere de rythme : ou la depense en serait si elle suivait exactement le
+   calendrier. Un trait, pas une couleur -- la couleur est deja prise par les
+   enveloppes, et ce repere doit rester lisible par-dessus n'importe laquelle. */
+.total-track .total-mark{
+  position:absolute; top:-2px; bottom:-2px; width:2px; min-width:0;
+  background:var(--ink); border-radius:1px; transform:translateX(-1px);
+  box-shadow:0 0 0 1.5px var(--card);
+}
 .total-note{margin:10px 0 0; font-size:11.5px; color:var(--ink-2)}
+.total-pace{margin:5px 0 0; font-size:11.5px; color:var(--ink-2); font-variant-numeric:tabular-nums}
+.total-pace.is-over{color:var(--danger)}
 
 /* entrées / sorties / solde du mois : trois chiffres côte à côte,
    affichés seulement s'il y a au moins un revenu à comparer */
@@ -184,7 +203,9 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   font-size:11.5px; font-weight:600; color:var(--ink-2);
   text-transform:uppercase; letter-spacing:.08em;
 }
-.link-btn{font-size:12.5px; font-weight:500; color:var(--ink-2); padding:4px}
+.link-btn{font-size:12.5px; font-weight:500; color:var(--ink-2); padding:4px; position:relative}
+/* « Gerer », « + Ajouter » : 26 px de haut a l'ecran, 44 sous le doigt */
+.link-btn::before{content:""; position:absolute; inset:-9px 0 -9px -18px}
 .link-btn.on{color:var(--ink)}
 
 /* ============ enveloppes ============ */
@@ -208,6 +229,18 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 .env-track i{display:block; height:100%; background:var(--c)}
 .env.is-over .env-track i{background:var(--danger)}
 .env-edit{font-size:11.5px; color:var(--ink-2)}
+/* Rangee reordonnable : le bouton d'enveloppe et ses deux commandes d'ordre
+   cote a cote -- jamais imbriques, un <button> dans un <button> est invalide. */
+.env-row{display:flex; align-items:stretch; gap:8px}
+.env-row .env{flex:1; min-width:0}
+.env-order{display:flex; flex-direction:column; gap:6px; flex:none}
+.env-move{
+  flex:1; min-width:78px; min-height:44px; padding:0 8px; border-radius:var(--r-field);
+  border:1px solid var(--line); background:var(--card);
+  font-size:11px; font-weight:500; color:var(--ink-2);
+}
+.env-move:active{background:var(--field)}
+.env-move:disabled{opacity:.35; cursor:default}
 .env-add{
   border:1px dashed var(--line-strong); border-radius:var(--r-env); padding:13px;
   width:100%; color:var(--ink-2); font-size:13px; font-weight:500;
@@ -216,6 +249,12 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 
 /* ============ listes de dépenses ============ */
 .tx-list{display:flex; flex-direction:column; gap:6px; margin-top:4px}
+/* Total de ce qui est affiche : une recherche ou un filtre pose une question
+   chiffree, la reponse ne doit pas se faire de tete. */
+.tx-sum{
+  margin:10px 0 0; font-size:11.5px; color:var(--ink-2);
+  font-variant-numeric:tabular-nums; text-align:center;
+}
 .tx-day{
   font-size:11px; color:var(--ink-2); font-weight:600; letter-spacing:.07em;
   text-transform:uppercase; margin:12px 0 2px; padding-left:2px;
@@ -263,9 +302,11 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 }
 .filter-bar span{flex:1}
 .chip-x{
-  width:28px; height:28px; border-radius:var(--r-bar); background:var(--field);
+  width:32px; height:32px; border-radius:var(--r-bar); background:var(--field);
   display:grid; place-items:center; font-size:11px; color:var(--ink-2); flex:none;
+  position:relative;
 }
+.chip-x::before{content:""; position:absolute; inset:-6px}
 
 .empty{text-align:center; padding:40px 20px; color:var(--ink-2)}
 .empty b{display:block; font-size:15px; font-weight:600; color:var(--ink); margin-bottom:5px}
@@ -318,12 +359,13 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 .cal-item:last-child{border-bottom:0}
 
 /* pastilles de modèle dans la feuille de saisie */
-.icon-picker{display:flex; flex-wrap:wrap; gap:8px; max-height:176px; overflow-y:auto; padding:2px}
+.icon-picker{display:flex; flex-wrap:wrap; gap:10px; max-height:186px; overflow-y:auto; padding:4px}
 .icon-chip{
-  width:34px; height:34px; border-radius:9px; background:var(--c); color:#fff;
+  width:38px; height:38px; border-radius:9px; background:var(--c); color:#fff;
   display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700;
   position:relative; flex:none;
 }
+.icon-chip::before{content:""; position:absolute; inset:-4px}
 .icon-chip.is-generic{background:var(--field); color:var(--ink-2); border:1px dashed var(--line-strong)}
 .icon-chip.on::after{content:""; position:absolute; inset:-4px; border-radius:12px; border:2px solid var(--ink)}
 #icon-disclaimer{margin:-2px 0 2px; font-size:11px}
@@ -333,9 +375,18 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   background:var(--card); border:1px solid var(--line); border-radius:var(--r-card);
   padding:16px; display:flex; flex-direction:column; gap:12px;
 }
+/* Chaque mois est un bouton sur toute la hauteur de la zone : la barre dessinee
+   peut ne faire que trois pixels, la cible reste de 88 px. */
 .hist{display:flex; align-items:flex-end; gap:7px; height:88px}
-.hist div{flex:1; background:var(--field); border-radius:var(--r-bar) var(--r-bar) 0 0; min-height:3px}
-.hist div.on{background:var(--dark)}
+.hist button{flex:1; height:100%; display:flex; align-items:flex-end; padding:0}
+.hist button::after{
+  content:""; width:100%; height:var(--h,3%); min-height:3px;
+  background:var(--field); border-radius:var(--r-bar) var(--r-bar) 0 0;
+  transition:background .15s ease;
+}
+.hist button.on::after{background:var(--dark)}
+@media (hover:hover){ .hist button:hover::after{background:var(--line-strong)} }
+.hist button:active::after{background:var(--line-strong)}
 .hist-days{display:flex; gap:7px}
 .hist-days span{
   flex:1; text-align:center; font-size:10px; color:var(--ink-2);
@@ -350,7 +401,7 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 }
 .chart-tip.on{color:var(--ink); font-weight:500}
 .chart-bar{
-  display:grid; gap:2px; height:22px; border-radius:var(--r-bar);
+  display:grid; gap:2px; height:28px; border-radius:var(--r-bar);
   overflow:hidden; background:var(--field);
 }
 .chart-bar button{height:100%; min-width:0; background:var(--c); transition:opacity .18s ease}
@@ -372,8 +423,8 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 
 .legend{display:flex; flex-direction:column}
 .legend-row{
-  display:flex; align-items:center; gap:10px; width:100%; text-align:left;
-  padding:9px 4px; border-radius:var(--r-bar); border-bottom:1px solid var(--line);
+  display:flex; align-items:center; gap:10px; width:100%; text-align:left; min-height:44px;
+  padding:11px 4px; border-radius:var(--r-bar); border-bottom:1px solid var(--line);
 }
 .legend-row:last-child{border-bottom:0}
 .legend-row.on{background:var(--field)}
@@ -386,11 +437,13 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 /* ============ réglages ============ */
 .seg{display:flex; gap:2px; background:var(--field); border-radius:var(--r-field); padding:3px}
 .seg button{
-  flex:1; padding:9px 0; border-radius:7px; font-size:12.5px; font-weight:500; color:var(--ink-2);
+  flex:1; padding:11px 0; min-height:42px; border-radius:7px;
+  font-size:12.5px; font-weight:500; color:var(--ink-2);
 }
 .seg button.on{background:var(--card); color:var(--ink); border:1px solid var(--line)}
 .seg-sm{padding:2px; background:var(--card); border:1px solid var(--line)}
-.seg-sm button{flex:none; padding:6px 12px; font-size:11.5px; border-radius:6px}
+.seg-sm button{flex:none; padding:9px 13px; min-height:38px; font-size:11.5px; border-radius:6px; position:relative}
+.seg-sm button::before{content:""; position:absolute; inset:-4px 0}
 .seg-sm button.on{background:var(--dark); color:var(--on-dark); border-color:var(--dark)}
 .setting-note{margin:0; font-size:12.5px; color:var(--ink-2); line-height:1.5}
 .setting-note strong{color:var(--ink); font-weight:600}
@@ -403,6 +456,9 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 }
 .btn:active{background:var(--field)}
 .btn-danger{color:var(--danger); margin-top:2px; width:100%}
+/* seuls boutons pleine largeur poses directement dans un <form> en colonne :
+   sans width, flex:1 les laisserait a la taille de leur texte */
+#tx-duplicate{width:100%; margin-top:2px}
 .version{text-align:center; font-size:11px; color:var(--ink-3); margin:4px 0 0}
 
 /* ---- raccourci Apple : lien à copier + étapes repliables ---- */
@@ -533,11 +589,13 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 .sheet-head{display:flex; align-items:center; gap:12px; padding:8px 0 2px}
 .sheet-head h2{flex:1; text-align:center; font-size:14px; font-weight:600}
 .sheet-close{
-  width:32px; height:32px; border-radius:var(--r-bar); background:var(--field);
-  font-size:12px; color:var(--ink-2); flex:none;
+  width:36px; height:36px; border-radius:var(--r-bar); background:var(--field);
+  font-size:12px; color:var(--ink-2); flex:none; position:relative;
 }
+.sheet-close::before{content:""; position:absolute; inset:-5px}
 .sheet-save{
-  padding:8px 16px; border-radius:var(--r-field); background:var(--dark); color:var(--on-dark);
+  padding:11px 18px; min-height:42px; border-radius:var(--r-field);
+  background:var(--dark); color:var(--on-dark);
   font-size:12.5px; font-weight:500; flex:none;
 }
 
@@ -569,7 +627,7 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 
 .env-picker{display:flex; flex-wrap:wrap; gap:6px}
 .env-picker button{
-  padding:9px 12px; border-radius:var(--r-field);
+  padding:11px 12px; min-height:42px; border-radius:var(--r-field);
   border:1px solid var(--line); background:var(--card);
   font-size:12.5px; display:flex; align-items:center; gap:7px;
 }
@@ -580,11 +638,32 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 
 .color-picker{display:flex; flex-wrap:wrap; gap:9px}
 .color-picker button{
-  width:32px; height:32px; border-radius:var(--r-bar); background:var(--c); position:relative;
+  width:36px; height:36px; border-radius:var(--r-bar); background:var(--c); position:relative;
 }
+.color-picker button::before{content:""; position:absolute; inset:-5px}
 .color-picker button.on::after{
   content:""; position:absolute; inset:-4px; border-radius:6px; border:2px solid var(--ink);
 }
+
+/* ============ bandeau « nouvelle version » ============
+   Installee sur l'ecran d'accueil, l'appli ne se recharge jamais d'elle-meme :
+   sans ce bandeau, une correction publiee reste invisible pendant des jours. */
+.update-bar{
+  position:fixed; z-index:39; left:50%; transform:translate(-50%,12px);
+  /* au-dessus du bouton + (qui monte a 136 px du bas), sinon le bandeau
+     le recouvre juste au moment ou l'on veut noter une depense */
+  bottom:calc(148px + env(safe-area-inset-bottom));
+  width:min(460px,calc(100% - 32px));
+  display:flex; align-items:center; gap:10px;
+  background:var(--card); border:1px solid var(--line-strong);
+  border-radius:var(--r-card); padding:10px 10px 10px 14px;
+  box-shadow:var(--glass-shadow);
+  font-size:12.5px; opacity:0; pointer-events:none;
+  transition:opacity .2s ease, transform .2s ease;
+}
+.update-bar span{flex:1; min-width:0}
+.update-bar .btn{flex:none; padding:9px 14px; min-height:40px}
+.update-bar.show{opacity:1; transform:translate(-50%,0); pointer-events:auto}
 
 /* ============ toast ============ */
 .toast{
