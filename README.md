@@ -121,7 +121,7 @@ design/chartes.html   les quatre directions proposées au départ (état d'origi
 ## Tests
 
 ```bash
-npm test          # régressions : 95 vérifications, sortie non nulle si l'une casse
+npm test          # régressions : 107 vérifications, sortie non nulle si l'une casse
 npm run audit     # audit de mise en page : débordements, texte coupé, cibles tactiles
 ```
 

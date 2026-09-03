@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.8.1";
 
 /* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
    prend la teinte suivante, jamais une couleur tirée au hasard.
@@ -1401,6 +1401,20 @@ function updateRecurringTypeUI(editing) {
   renderIconPicker();
 }
 
+/* Le libellé accompagne le modèle tant que l'utilisateur ne l'a pas écrit
+   lui-même. On ne testait que « le champ est-il vide ? » : au premier modèle
+   choisi il se remplissait, et plus jamais ensuite — on repartait de Netflix,
+   on touchait Spotify, et la règle gardait « Netflix » sous une pastille verte.
+   Le champ est donc considéré comme automatique s'il est vide OU s'il porte
+   exactement le nom du modèle actuellement sélectionné ; tout le reste a été
+   tapé à la main et ne doit plus bouger. */
+function labelFollowsPreset() {
+  const current = $("#recurring-label").value.trim();
+  if (!current) return true;
+  const preset = ICON_PRESETS.find((p) => p.id === state.draftRecurringIcon);
+  return Boolean(preset) && current === preset.nom;
+}
+
 function renderIconPicker() {
   const picker = $("#recurring-icon-picker");
   picker.replaceChildren();
@@ -1856,7 +1870,11 @@ $("#recurring-type").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-type]");
   if (!btn || btn.dataset.type === state.draftRecurringType) return;
   state.draftRecurringType = btn.dataset.type;
-  state.draftRecurringIcon = null; // les modèles ne sont pas les mêmes d'un type à l'autre
+  // les modèles ne sont pas les mêmes d'un type à l'autre : le modèle tombe, et
+  // le libellé avec lui s'il en venait — « Netflix » n'a rien à faire en revenu
+  const follows = labelFollowsPreset();
+  state.draftRecurringIcon = null;
+  if (follows) $("#recurring-label").value = "";
   if (state.draftRecurringType === "depense" && !state.draftRecurringEnv) {
     const first = envelopes()[0];
     if (!first) {
@@ -1872,9 +1890,11 @@ $("#recurring-type").addEventListener("click", (e) => {
 $("#recurring-icon-picker").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-icon]");
   if (!btn) return;
+  // à mesurer AVANT de changer de modèle : la question porte sur l'ancien
+  const follows = labelFollowsPreset();
   state.draftRecurringIcon = btn.dataset.icon || null;
   const preset = ICON_PRESETS.find((p) => p.id === state.draftRecurringIcon);
-  if (preset && !$("#recurring-label").value.trim()) $("#recurring-label").value = preset.nom;
+  if (preset && follows) $("#recurring-label").value = preset.nom;
   renderIconPicker();
 });
 

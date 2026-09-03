@@ -369,6 +369,74 @@ async function boot(page, dataExpr) {
   check("puis supprime", flow.restant === 0, flow);
   check("une enveloppe se cree", flow.enveloppes === 4, flow);
 
+  // ------------------------------------------------ modeles de recurrence
+  console.log("\nModeles (pastilles de marque) et libelle");
+  await boot(page, `baseData()`);
+  const icones = await evalOn(page, `
+    go("recurrent"); await wait(240);
+    q("#recurring-add").click(); await wait(360);
+    const champ = q("#recurring-label");
+    const pick = async (id) => { q('#recurring-icon-picker [data-icon="' + id + '"]').click(); await wait(200); };
+
+    await pick("netflix");
+    const premier = champ.value;
+    await pick("spotify");
+    const second = champ.value;
+    await pick("edf");
+    const troisieme = champ.value;
+
+    // un libelle ecrit a la main ne doit plus bouger
+    champ.value = "Abonnement de Marie";
+    await pick("deezer");
+    const ecritAlaMain = champ.value;
+
+    // repartir d'un modele : le libelle recolle au modele
+    champ.value = "";
+    await pick("free");
+    const repris = champ.value;
+
+    const chip = q("#recurring-icon-picker button.on");
+    return { premier, second, troisieme, ecritAlaMain, repris,
+             pastilleActive: chip && chip.dataset.icon, mono: chip && chip.textContent };`);
+  check("le premier modele remplit le libelle", icones.premier === "Netflix", icones);
+  check("en changer met le libelle a jour", icones.second === "Spotify", icones);
+  check("et encore au troisieme", icones.troisieme === "EDF", icones);
+  check("un libelle ecrit a la main est respecte", icones.ecritAlaMain === "Abonnement de Marie", icones);
+  check("un libelle vide se laisse remplir a nouveau", icones.repris === "Free", icones);
+  check("la pastille choisie est bien celle affichee", icones.pastilleActive === "free" && icones.mono === "F", icones);
+
+  const bascule = await evalOn(page, `
+    const champ = q("#recurring-label");
+    q('#recurring-icon-picker [data-icon="netflix"]').click(); await wait(200);
+    const avant = champ.value;
+    q('#recurring-type [data-type="revenu"]').click(); await wait(260);
+    const apres = champ.value;
+    const modeles = qa("#recurring-icon-picker [data-icon]").map((b) => b.dataset.icon);
+    q('#recurring-icon-picker [data-icon="salaire"]').click(); await wait(200);
+    const revenu = champ.value;
+    return { avant, apres, modeles, revenu, aucunChoisi: !q("#recurring-icon-picker button.on").dataset.icon };`);
+  check("passer en revenu vide le libelle venu d'un modele de depense", bascule.avant === "Netflix" && bascule.apres === "", bascule);
+  check("les modeles proposes sont ceux du revenu", !bascule.modeles.includes("netflix") && bascule.modeles.includes("salaire"), bascule.modeles);
+  check("un modele de revenu remplit le libelle", bascule.revenu === "Salaire", bascule);
+
+  const garde = await evalOn(page, `
+    const champ = q("#recurring-label");
+    champ.value = "Mon salaire a moi";
+    q('#recurring-type [data-type="depense"]').click(); await wait(260);
+    return { apres: champ.value };`);
+  check("un libelle ecrit a la main survit au changement de type", garde.apres === "Mon salaire a moi", garde);
+
+  const enregistre = await evalOn(page, `
+    q("#recurring-amount").value = "13,99";
+    q('#recurring-icon-picker [data-icon="netflix"]').click(); await wait(200);
+    q("#recurring-label").value = "Netflix";
+    q("#recurring-day").value = "5";
+    q("#recurring-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(360);
+    const r = stored().recurring[0];
+    return { icone: r && r.icone, libelle: r && r.libelle, chip: q("#recurring-list .chip") ? q("#recurring-list .chip").textContent : null };`);
+  check("le modele choisi est enregistre avec la regle", enregistre.icone === "netflix" && enregistre.libelle === "Netflix", enregistre);
+  check("la liste affiche sa pastille", enregistre.chip === "N", enregistre);
+
   // ------------------------------------------------ graphique et filtres
   console.log("\nBilan : forme du graphique, parts, filtre");
   await boot(page, `baseData({ expenses: [
