@@ -56,9 +56,24 @@ La dépense n'est jamais enregistrée sans confirmation : le tiroir s'ouvre touj
 | Récurrent | calendrier des échéances du mois, revenus récurrents, dépenses récurrentes |
 | Réglages | (engrenage de la barre du haut) thème, export / import, lien du raccourci Apple, tout effacer ; la carte d'installation disparaît une fois l'appli installée |
 
-L'enveloppe **Évitable** (achats d'impulsion, livraisons…) fait partie des enveloppes par défaut ; une sauvegarde plus ancienne la reçoit une seule fois à l'ouverture (50 €/mois, modifiable), et le Bilan chiffre sa part du mois (« dont évitable … »).
+**Évitable** est une **étiquette** à cocher sur n'importe quelle dépense (un resto est à la fois « Sorties » et évitable), pas une enveloppe : le Bilan chiffre sa part du mois (« dont évitable … »), la liste la signale et un filtre ne garde que les évitables. Une enveloppe nommée « Évitable » (créée avec la 1.9) continue d'être comptée comme telle.
 
 Le bouton **+**, au centre de la barre d'onglets, note une dépense ou un revenu ponctuel. Toute suppression (mouvement, sélection, enveloppe, règle récurrente, « Tout effacer ») propose **Annuler** pendant sept secondes : on ne remet que ce qui a été retiré, sans toucher à ce qui a été noté entre-temps. En modification, **Dupliquer** rouvre le même montant, la même enveloppe et le même libellé à la date du jour — pour la dépense qui revient sans être assez régulière pour mériter une règle. Le mode **Gérer** de l'accueil sert à créer, modifier et **réordonner** les enveloppes.
+
+## Gestes et accessibilité
+
+Balayer une ligne vers la gauche la supprime (annulable) ; balayer une vue change de mois ; toucher le titre du mois ouvre un sélecteur de mois et d'année ; glisser la poignée d'un tiroir vers le bas le ferme. Tiroir ouvert, le reste de l'appli est `inert` et le focus revient au bouton d'origine à la fermeture ; les groupes de choix se parcourent aux flèches. Les tailles de texte sont en `rem` et suivent la taille réglée dans iOS (`--text-scale`).
+
+## Budgets, report, objectifs
+
+- **Un budget par enveloppe et par mois.** Changer le budget de Courses ne vaut que pour le mois affiché et les suivants (`budgetHistory`) ; les mois passés gardent le leur, sauf si on coche « Appliquer aussi aux mois passés ».
+- **Report du reste** (par enveloppe) : ce qui n'a pas été dépensé un mois s'ajoute au suivant ; un dépassement n'est jamais reporté comme une dette.
+- **Supprimer une enveloppe qui contient des dépenses** propose de les réaffecter, d'archiver l'enveloppe (historique gardé, saisie fermée, règles récurrentes en pause) ou de tout supprimer. Les archivées se restaurent depuis *Gérer*.
+- **Premier lancement guidé** : revenu mensuel et budgets saisis tout de suite, au lieu de montants inventés.
+- **Suggestion d'enveloppe** : un libellé déjà rangé (« Monoprix ») présélectionne son enveloppe habituelle.
+- **Objectifs d'épargne** (accueil) : montant, avance, échéance et somme à mettre de côté par mois ; versements annulables.
+- **À venir** (onglet Récurrent) : les échéances des 7 prochains jours, et charges fixes contre revenus fixes.
+- Une échéance au **29, 30 ou 31** tombe le dernier jour du mois quand celui-ci est plus court.
 
 ## Les échéances récurrentes
 
@@ -108,9 +123,11 @@ web/                  le site — c'est aussi le contenu des apps desktop
   manifest.webmanifest / sw.js    installation et mode hors-ligne
   fonts/              Archivo embarquée (aucun appel réseau)
   icons/              icônes PWA et iPhone
+  splash/             écrans de lancement iPhone, clairs et sombres (npm run splash)
 src-tauri/            coque desktop (Tauri 2) → .exe et .dmg
 tools/
   make-icons.mjs      régénère toutes les icônes (npm run icons)
+  make-splash.mjs     régénère les écrans de lancement iPhone (npm run splash)
   serve.mjs           serveur de test local (npm run serve)
 tests/navigateur/
   cdp.js              pilote Chrome minimal (protocole DevTools) + serveur statique
@@ -123,7 +140,7 @@ design/chartes.html   les quatre directions proposées au départ (état d'origi
 ## Tests
 
 ```bash
-npm test          # régressions : 140 vérifications, sortie non nulle si l'une casse
+npm test          # régressions : 197 vérifications, sortie non nulle si l'une casse
 npm run audit     # audit de mise en page : débordements, texte coupé, cibles tactiles
 ```
 

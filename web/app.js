@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "1.10.0";
+const APP_VERSION = "2.0.0";
 
 /* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
    prend la teinte suivante, jamais une couleur tirée au hasard.
@@ -19,19 +19,22 @@ const COLORS = [
   "#B8820A", "#D6497E", "#1B9AAA",
 ];
 
+/* Enveloppes proposées au premier lancement. Les budgets sont VIDES : ils
+   n'étaient que des chiffres inventés (800 € de logement…) qui faussaient
+   l'accueil avant la moindre saisie. `suggestion` n'apparaît qu'en filigrane. */
 const DEFAULT_ENVELOPES = [
-  { nom: "Logement", couleur: "#3F6DE0", budget: 80000 },
-  { nom: "Courses", couleur: "#E4634A", budget: 40000 },
-  { nom: "Transports", couleur: "#23A26D", budget: 15000 },
-  { nom: "Sorties", couleur: "#7B57D6", budget: 20000 },
-  { nom: "Abonnements", couleur: "#B8820A", budget: 6000 },
-  { nom: "Évitable", couleur: "#D6497E", budget: 5000 },
+  { nom: "Logement", couleur: "#3F6DE0", suggestion: 800 },
+  { nom: "Courses", couleur: "#E4634A", suggestion: 400 },
+  { nom: "Transports", couleur: "#23A26D", suggestion: 150 },
+  { nom: "Sorties", couleur: "#7B57D6", suggestion: 200 },
+  { nom: "Abonnements", couleur: "#B8820A", suggestion: 60 },
+  { nom: "Santé", couleur: "#D6497E", suggestion: 60 },
+  { nom: "Loisirs", couleur: "#1B9AAA", suggestion: 80 },
 ];
 
-/* « Évitable » : ce qu'on aurait pu ne pas dépenser (achat d'impulsion, livraison,
-   café du matin). Ajoutée aux sauvegardes antérieures à la 1.9, UNE fois — le
-   drapeau `settings.evitable` empêche de la ressusciter après une suppression. */
-const EVITABLE = DEFAULT_ENVELOPES.find((e) => e.nom === "Évitable");
+/* « Évitable » est une ÉTIQUETTE posée sur une dépense, pas une enveloppe : un
+   resto est à la fois « Sorties » et évitable. Une enveloppe qui s'appelle
+   « Évitable » (créée avec la 1.9) continue pourtant d'être comptée comme telle. */
 const noAccent = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
 /* Au-delà de six parts, la queue est repliée dans « Autres » : ajouter
@@ -153,8 +156,8 @@ function sizeAmountInput(input) {
      les chiffres de tête qui sortent du champ — on lit 345,67 là où 12 345,67 est
      saisi. Plutôt que rogner, on rétrécit la fonte jusqu'à ce que le montant tienne
      (plancher à 22 px, en dessous ce n'est plus le chiffre principal de l'écran). */
-  const max = window.innerWidth * 0.6;
-  const size = width > max ? Math.max(22, Math.floor((base * max) / width)) : base;
+  const max = window.innerWidth * 0.68;
+  const size = width > max ? Math.max(26, Math.floor((base * max) / width)) : base;
   input.style.fontSize = `${size}px`;
   input.style.width = `${Math.min((width * size) / base + 4, max)}px`;
 }
@@ -230,14 +233,19 @@ function dayHeading(iso, withYear = false) {
 
 /* ---------------------------------------------------------- données */
 
+const SCHEMA = 2;
+const EVITABLE_COLOR = "#D6497E";
+
 function seed() {
   return {
     version: 1,
-    envelopes: DEFAULT_ENVELOPES.map((e, i) => ({ id: uid(), ordre: i, ...e })),
+    schema: SCHEMA,
+    envelopes: DEFAULT_ENVELOPES.slice(0, 5).map((e, i) => ({ id: uid(), ordre: i, nom: e.nom, couleur: e.couleur, budget: 0 })),
     expenses: [],
     incomes: [],
     recurring: [],
-    settings: { theme: "auto", chart: "barre", envSort: "ordre", evitable: true },
+    goals: [],
+    settings: { theme: "auto", chart: "barre", envSort: "ordre", histMode: "6", onboarded: false },
     updatedAt: Date.now(),
   };
 }
@@ -257,7 +265,6 @@ function isSane(d) {
    l'import dit combien d'enregistrements il a dû laisser de côté. */
 
 let lastRepairCount = 0;
-let lastAddedEvitable = false;
 
 const isMonth = (v) => typeof v === "string" && /^\d{4}-\d{2}$/.test(v);
 const isIsoDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
@@ -269,6 +276,17 @@ function cleanCents(v) {
   return null;
 }
 
+/** Historique des budgets : [{from:"YYYY-MM"|"0000-00", cents}], trié, sans doublon de mois. */
+function cleanBudgetHistory(h) {
+  if (!Array.isArray(h)) return [];
+  const byMonth = new Map();
+  for (const x of h) {
+    if (!x || !(x.from === "0000-00" || isMonth(x.from))) continue;
+    byMonth.set(x.from, cleanCents(x.cents) ?? 0);
+  }
+  return [...byMonth].map(([from, cents]) => ({ from, cents })).sort((a, b) => a.from.localeCompare(b.from));
+}
+
 function cleanMovement(t, drop) {
   const montant = cleanCents(t?.montant);
   if (montant === null || !isIsoDate(t.date)) return drop();
@@ -278,6 +296,7 @@ function cleanMovement(t, drop) {
     montant,
     libelle: typeof t.libelle === "string" ? t.libelle.slice(0, 60) : "",
     createdAt: Number.isFinite(t.createdAt) ? t.createdAt : 0,
+    ...(t.evitable === true ? { evitable: true } : {}),
   };
 }
 
@@ -288,7 +307,10 @@ function normalizeData(data) {
   const drop = () => { dropped++; return null; };
   const keep = (x) => x !== null;
 
-  data.settings = { theme: "auto", chart: "barre", envSort: "ordre", ...data.settings };
+  data.settings = { theme: "auto", chart: "barre", envSort: "ordre", histMode: "6", ...data.settings };
+  if (!["6", "12", "annee"].includes(data.settings.histMode)) data.settings.histMode = "6";
+  // une sauvegarde qui n'a pas ce champ a déjà servi (ou vient d'un import) : pas d'accueil guidé
+  if (typeof data.settings.onboarded !== "boolean") data.settings.onboarded = true;
   if (!["auto", "light", "dark"].includes(data.settings.theme)) data.settings.theme = "auto";
   if (!["barre", "camembert"].includes(data.settings.chart)) data.settings.chart = "barre";
   if (!["ordre", "entame"].includes(data.settings.envSort)) data.settings.envSort = "ordre";
@@ -302,25 +324,15 @@ function normalizeData(data) {
         id: typeof e.id === "string" && e.id ? e.id : uid(),
         nom,
         budget: cleanCents(e.budget) ?? 0,
+        budgetHistory: cleanBudgetHistory(e.budgetHistory),
+        report: e.report === true,
+        reportDepuis: isMonth(e.reportDepuis) ? e.reportDepuis : null,
+        archivee: e.archivee === true,
         couleur: /^#[0-9a-f]{6}$/i.test(e.couleur) ? e.couleur : COLORS[i % COLORS.length],
         ordre: Number.isFinite(e.ordre) ? e.ordre : i,
       };
     })
     .filter(keep);
-
-  // sauvegarde antérieure à 1.9 : on propose « Évitable », sauf si elle existe déjà
-  lastAddedEvitable = false;
-  if (!data.settings.evitable) {
-    data.settings.evitable = true;
-    if (!data.envelopes.some((e) => noAccent(e.nom) === "evitable")) {
-      data.envelopes.push({
-        id: uid(),
-        ...EVITABLE,
-        ordre: data.envelopes.reduce((n, e) => Math.max(n, e.ordre + 1), 0),
-      });
-      lastAddedEvitable = true;
-    }
-  }
 
   const known = new Set(data.envelopes.map((e) => e.id));
 
@@ -346,7 +358,8 @@ function normalizeData(data) {
         id: typeof r.id === "string" && r.id ? r.id : uid(),
         type,
         montant,
-        jour: Math.min(28, Math.max(1, jour)),
+        jour: Math.min(31, Math.max(1, jour)),
+        evitable: r.evitable === true,
         libelle: typeof r.libelle === "string" && r.libelle.trim() ? r.libelle.trim().slice(0, 60) : "Sans nom",
         actif: r.actif !== false,
         icone: typeof r.icone === "string" ? r.icone : null,
@@ -364,6 +377,23 @@ function normalizeData(data) {
       return false;
     });
 
+  data.goals = (Array.isArray(data.goals) ? data.goals : [])
+    .map((g) => {
+      const cible = cleanCents(g?.cible);
+      const nom = typeof g?.nom === "string" ? g.nom.trim().slice(0, 40) : "";
+      if (cible === null || !nom) return drop();
+      return {
+        id: typeof g.id === "string" && g.id ? g.id : uid(),
+        nom,
+        cible,
+        epargne: Math.max(0, Math.round(Number.isFinite(g.epargne) ? g.epargne : 0)),
+        echeance: isMonth(g.echeance) ? g.echeance : null,
+        createdAt: Number.isFinite(g.createdAt) ? g.createdAt : 0,
+      };
+    })
+    .filter(keep);
+
+  data.schema = SCHEMA;
   lastRepairCount = dropped;
   return data;
 }
@@ -380,7 +410,12 @@ function load() {
   }
 }
 
+/* Compteur de révision : les tables dérivées (dépensé par mois et par enveloppe)
+   sont recalculées quand il change, jamais avant. Toute modification passe par save(). */
+let dataRev = 0;
+
 function save() {
+  dataRev++;
   state.data.updatedAt = Date.now();
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(state.data));
@@ -401,6 +436,17 @@ const state = {
   period: "mois", // mois | 30j | 3m | annee | tout | perso
   dateFrom: "",
   dateTo: "",
+  onlyAvoidable: false,
+  editingGoal: null,
+  fate: "archive",
+  fateTo: null,
+  draftEnvManual: false,
+  draftEvManual: false,
+  suggestedFrom: null,
+  draftBulkEv: "",
+  limit: 60,
+  limitKey: "",
+  itemKeys: [],
   amountMin: null, // centimes, ou null
   amountMax: null,
   selecting: false,
@@ -423,7 +469,11 @@ const state = {
 
 /* ---------------------------------------------------------- sélecteurs */
 
-const envelopes = () => [...state.data.envelopes].sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0));
+/* Les enveloppes ARCHIVÉES ne s'offrent plus à la saisie (envelopes()) mais gardent
+   leur nom, leur couleur et leur historique (allEnvelopes(), envById()). */
+const sortByOrder = (list) => [...list].sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0));
+const envelopes = () => sortByOrder(state.data.envelopes.filter((e) => !e.archivee));
+const allEnvelopes = () => sortByOrder(state.data.envelopes);
 const envById = (id) => state.data.envelopes.find((e) => e.id === id);
 const expensesOf = (month) => state.data.expenses.filter((t) => monthOf(t.date) === month);
 const incomesOf = (month) => state.data.incomes.filter((t) => monthOf(t.date) === month);
@@ -444,7 +494,77 @@ function spentByEnv(month) {
   return totals;
 }
 
-const totalBudget = () => envelopes().reduce((sum, e) => sum + e.budget, 0);
+/* ---- budgets : un montant par enveloppe ET par mois ----
+   Changer le budget de Courses ne doit pas réécrire les jauges de l'an dernier.
+   `budgetHistory` garde les changements : [{from:"0000-00", cents}, {from:"2026-10", cents}]
+   — chaque entrée vaut à partir de son mois. Sans historique, `budget` vaut partout. */
+function budgetFor(env, month) {
+  const h = env.budgetHistory;
+  if (!h || !h.length) return env.budget;
+  let cents = h[0].cents;
+  for (const e of h) if (e.from <= month) cents = e.cents;
+  return cents;
+}
+
+/** Fixe le budget à partir de `month` : les mois d'avant gardent le leur. */
+function setBudgetFrom(env, month, cents) {
+  const h = env.budgetHistory?.length ? env.budgetHistory.map((e) => ({ ...e })) : [{ from: "0000-00", cents: env.budget }];
+  const at = h.find((e) => e.from === month);
+  if (at) at.cents = cents;
+  else h.push({ from: month, cents });
+  h.sort((a, b) => a.from.localeCompare(b.from));
+  // deux entrées voisines identiques ne disent rien de plus
+  env.budgetHistory = h.filter((e, i) => i === 0 || e.cents !== h[i - 1].cents);
+  env.budget = budgetFor(env, todayIso().slice(0, 7));
+}
+
+/** Dépensé par mois puis par enveloppe, sur tout l'historique — calculé une fois par révision. */
+let spentCache = { rev: -1, data: null, table: null };
+function spentTable() {
+  if (spentCache.rev === dataRev && spentCache.data === state.data) return spentCache.table;
+  const table = Object.create(null);
+  for (const t of state.data.expenses) {
+    const m = monthOf(t.date);
+    const row = (table[m] ||= Object.create(null));
+    row[t.envelopeId] = (row[t.envelopeId] || 0) + t.montant;
+  }
+  spentCache = { rev: dataRev, data: state.data, table };
+  return table;
+}
+
+/** Report : ce qui n'a pas été dépensé un mois s'ajoute au suivant (jamais une dette). */
+const MAX_CARRY_MONTHS = 60;
+function carryIn(env, month) {
+  if (!env.report || !isMonth(env.reportDepuis) || month <= env.reportDepuis) return 0;
+  const table = spentTable();
+  let carry = 0;
+  let m = env.reportDepuis;
+  for (let i = 0; m < month && i < MAX_CARRY_MONTHS; i++) {
+    carry = Math.max(0, budgetFor(env, m) + carry - (table[m]?.[env.id] || 0));
+    m = shiftMonth(m, 1);
+  }
+  return carry;
+}
+
+/** Ce dont l'enveloppe dispose ce mois-là : son budget + le report. */
+const budgetOf = (env, month) => budgetFor(env, month) + carryIn(env, month);
+
+/** Enveloppes à montrer pour un mois : les actives, plus les archivées qui y ont encore des dépenses. */
+function envelopesFor(month) {
+  const spent = spentTable()[month] || {};
+  return sortByOrder(state.data.envelopes.filter((e) => !e.archivee || spent[e.id]));
+}
+
+const totalBudget = (month) => envelopesFor(month).reduce((sum, e) => sum + budgetOf(e, month), 0);
+
+/* ---- étiquette « évitable » ---- */
+const isAvoidableEnv = (env) => Boolean(env) && noAccent(env.nom) === "evitable";
+const isAvoidable = (t) => t.evitable === true || isAvoidableEnv(envById(t.envelopeId));
+const avoidableSpent = (month) => expensesOf(month).filter(isAvoidable).reduce((n, t) => n + t.montant, 0);
+
+/* ---- jour d'échéance : au-delà de la fin du mois, c'est le dernier jour ---- */
+const daysIn = (month) => new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+const effDay = (rule, month) => Math.min(rule.jour, daysIn(month));
 const totalSpent = (month) => expensesOf(month).reduce((sum, t) => sum + t.montant, 0);
 const totalIncome = (month) => incomesOf(month).reduce((sum, t) => sum + t.montant, 0);
 
@@ -519,15 +639,16 @@ function generateRecurring() {
     let month = rule.debut > floor ? rule.debut : floor;
     while (month <= thisMonth) {
       // le mois en cours n'est dû qu'une fois le jour atteint ; les mois passés le sont tous
-      const due = month < thisMonth || today >= rule.jour;
+      const due = month < thisMonth || today >= effDay(rule, month);
       if (due && !done.has(month)) {
         const record = {
           id: uid(),
           montant: rule.montant,
           libelle: rule.libelle,
-          date: `${month}-${pad(rule.jour)}`,
+          date: `${month}-${pad(effDay(rule, month))}`,
           recurringId: rule.id,
           createdAt: Date.now(),
+          ...(rule.evitable ? { evitable: true } : {}),
         };
         if (rule.type === "revenu") state.data.incomes.push(record);
         else state.data.expenses.push({ ...record, envelopeId: rule.envelopeId });
@@ -539,6 +660,28 @@ function generateRecurring() {
   }
   if (created) save();
   return { created, backfilled };
+}
+
+/** Une règle modifiée met à jour l'occurrence DÉJÀ tamponnée du mois en cours (montant,
+    libellé, enveloppe, étiquette) : sinon corriger un loyer ne changeait que les mois à venir,
+    et le mois affiché gardait l'ancien chiffre. Renvoie la fonction qui défait ce changement. */
+function syncStamped(rule) {
+  const month = todayIso().slice(0, 7);
+  const list = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
+  const rec = list.find((t) => t.recurringId === rule.id && monthOf(t.date) === month);
+  if (!rec) return () => {};
+  const restore = snapshotOf(rec);
+  rec.montant = rule.montant;
+  rec.libelle = rule.libelle;
+  // la date ne passe jamais dans le futur : une échéance déjà tombée ne se « re-pose » pas
+  const day = effDay(rule, month);
+  if (day <= new Date().getDate()) rec.date = `${month}-${pad(day)}`;
+  if (rule.type === "depense") {
+    rec.envelopeId = rule.envelopeId;
+    if (rule.evitable) rec.evitable = true;
+    else delete rec.evitable;
+  }
+  return restore;
 }
 
 /** Message des échéances rattrapées, ou null s'il n'y a rien à dire. */
@@ -565,7 +708,7 @@ function render() {
     ? "Cet appareil"
     : state.month === thisMonth
       ? state.month.slice(0, 4)
-      : "Mois en cours";
+      : state.month.slice(0, 4);
   $("#open-settings").classList.toggle("on", reglages);
   $("#open-settings").setAttribute("aria-current", reglages ? "page" : "false");
 
@@ -587,6 +730,7 @@ function render() {
   if (state.view === "reglages") renderReglages();
 
   positionTabPill();
+  syncOnboarding();
 }
 
 /* La pastille de l'onglet actif est posée d'après la largeur réelle des
@@ -606,7 +750,7 @@ function positionTabPill() {
 }
 
 function renderAccueil() {
-  const budget = totalBudget();
+  const budget = totalBudget(state.month);
   const spent = totalSpent(state.month);
   const left = budget - spent;
   const perEnv = spentByEnv(state.month);
@@ -619,7 +763,7 @@ function renderAccueil() {
   track.replaceChildren();
   const base = Math.max(budget, spent, 1);
   const segments = [
-    ...envelopes().map((env) => ({ part: perEnv[env.id] || 0, couleur: env.couleur })),
+    ...allEnvelopes().map((env) => ({ part: perEnv[env.id] || 0, couleur: env.couleur })),
     { part: perEnv[NO_ENV] || 0, couleur: "var(--ink-3)" },
   ];
   for (const { part, couleur } of segments) {
@@ -665,6 +809,16 @@ function renderAccueil() {
     $("#total-pace").classList.toggle("is-over", gap > 0);
   }
 
+  /* « Il te reste » mesure les BUDGETS (ce qui est prévu), « Solde » les REVENUS (ce qui est
+     entré). Quand les budgets promettent plus que les revenus, le premier chiffre est flatteur :
+     on le dit, au lieu de laisser deux « reste » se contredire. */
+  const incomeNow = totalIncome(state.month);
+  const warn = $("#total-warn");
+  const overPromised = incomesOf(state.month).length > 0 && budget > incomeNow;
+  warn.hidden = !overPromised;
+  if (overPromised)
+    warn.textContent = `Tes budgets (${money(budget)}) dépassent tes revenus du mois (${money(incomeNow)}) de ${money(budget - incomeNow)}.`;
+
   // sans revenu saisi, la ligne n'afficherait que des zéros : on ne la
   // montre qu'à partir du premier revenu du mois
   const income = totalIncome(state.month);
@@ -676,6 +830,7 @@ function renderAccueil() {
     $("#flow-out").textContent = `−${money(spent)}`;
     $("#flow-net").textContent = `${net < 0 ? "−" : "+"}${money(Math.abs(net))}`;
     $("#flow-net").className = `flow-v ${net < 0 ? "is-expense" : "is-income"}`;
+    $("#flow-net-k").textContent = net < 0 ? "Déficit" : "Épargné";
   }
 
   $("#toggle-manage").textContent = state.managing ? "Terminé" : "Gérer";
@@ -685,8 +840,9 @@ function renderAccueil() {
      déjà dépassées) remontent en tête — c'est là qu'il y a quelque chose à
      faire. En mode Gérer l'ordre est celui que l'on règle, donc toujours le sien. */
   const byUse = state.data.settings.envSort === "entame" && !state.managing;
-  const use = (e) => (e.budget > 0 ? (perEnv[e.id] || 0) / e.budget : perEnv[e.id] ? Infinity : 0);
-  const shown = envelopes();
+  const budgetHere = (e) => budgetOf(e, state.month);
+  const use = (e) => (budgetHere(e) > 0 ? (perEnv[e.id] || 0) / budgetHere(e) : perEnv[e.id] ? Infinity : 0);
+  const shown = state.managing ? envelopes() : envelopesFor(state.month);
   if (byUse) shown.sort((a, b) => use(b) - use(a));
   const sortBtn = $("#toggle-sort");
   sortBtn.hidden = state.managing;
@@ -698,8 +854,10 @@ function renderAccueil() {
 
   for (const env of shown) {
     const spentHere = perEnv[env.id] || 0;
-    const over = spentHere > env.budget;
-    const pct = env.budget > 0 ? Math.round((spentHere / env.budget) * 100) : spentHere > 0 ? 100 : 0;
+    const envBudget = budgetHere(env);
+    const carried = carryIn(env, state.month);
+    const over = spentHere > envBudget;
+    const pct = envBudget > 0 ? Math.round((spentHere / envBudget) * 100) : spentHere > 0 ? 100 : 0;
 
     const row = document.createElement("button");
     row.type = "button";
@@ -715,14 +873,17 @@ function renderAccueil() {
     name.textContent = env.nom;
     const amount = document.createElement("span");
     amount.className = "env-a";
-    amount.textContent = over ? `−${money(spentHere - env.budget)}` : money(env.budget - spentHere);
+    amount.textContent = over ? `−${money(spentHere - envBudget)}` : money(envBudget - spentHere);
     head.append(dot, name, amount);
 
     const foot = document.createElement("span");
     foot.className = "env-foot";
     const sub = document.createElement("span");
     sub.className = "env-sub";
-    sub.textContent = `${over ? "dépassé" : "restants"} sur ${money(env.budget)}`;
+    sub.textContent =
+      `${over ? "dépassé" : "restants"} sur ${money(envBudget)}` +
+      (carried ? ` (dont ${money(carried)} reportés)` : "") +
+      (env.archivee ? " · archivée" : "");
     const right = document.createElement("span");
     right.className = state.managing ? "env-edit" : "env-p";
     right.textContent = state.managing ? "Modifier" : `${pct} %`;
@@ -768,6 +929,27 @@ function renderAccueil() {
   }
 
   if (state.managing) {
+    const archived = state.data.envelopes.filter((e) => e.archivee);
+    if (archived.length) {
+      const head = document.createElement("p");
+      head.className = "manage-hint";
+      head.textContent = "Archivées — l'historique reste, la saisie est fermée";
+      list.append(head);
+      for (const env of archived) {
+        const row = document.createElement("div");
+        row.className = "env-archived";
+        row.append(badge("env-dot", env.couleur, initialOf(env.nom)));
+        const name = document.createElement("span");
+        name.textContent = env.nom;
+        const back = document.createElement("button");
+        back.type = "button";
+        back.className = "btn btn-sm";
+        back.dataset.restore = env.id;
+        back.textContent = "Restaurer";
+        row.append(name, back);
+        list.append(row);
+      }
+    }
     const add = document.createElement("button");
     add.type = "button";
     add.className = "env-add";
@@ -779,17 +961,192 @@ function renderAccueil() {
     list.append(add, hint);
   }
 
-  if (!envelopes().length) list.append(emptyBlock("Aucune enveloppe", "Ajoute un poste de dépense pour commencer."));
+  if (!envelopes().length)
+    list.append(emptyBlock("Aucune enveloppe", "Ajoute un poste de dépense pour commencer.", { label: "Créer une enveloppe", run: () => openEnvSheet(null) }, "wallet"));
+  renderGoals();
 }
 
-function emptyBlock(title, sub) {
+/* ---------------------------------------------------------- objectifs d'épargne */
+
+/** Ce qu'il faut mettre de côté chaque mois pour tenir l'échéance (mois en cours compris). */
+function goalMonthly(g) {
+  if (!g.echeance) return null;
+  const left = g.cible - g.epargne;
+  if (left <= 0) return 0;
+  const [y1, m1] = todayIso().slice(0, 7).split("-").map(Number);
+  const [y2, m2] = g.echeance.split("-").map(Number);
+  const months = (y2 - y1) * 12 + (m2 - m1) + 1;
+  return months < 1 ? null : Math.ceil(left / months);
+}
+
+function renderGoals() {
+  const list = $("#goal-list");
+  list.replaceChildren();
+  const goals = state.data.goals;
+  if (!goals.length) {
+    list.append(emptyBlock("Aucun objectif", "Vacances, fonds d'urgence… fixe un montant et suis ta progression.", { label: "Créer un objectif", run: () => openGoalSheet(null) }, "target"));
+    return;
+  }
+  for (const g of goals) {
+    const pct = Math.min(100, Math.round((g.epargne / g.cible) * 100));
+    const done = g.epargne >= g.cible;
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "goal" + (done ? " is-done" : "");
+    row.dataset.goal = g.id;
+
+    const head = document.createElement("span");
+    head.className = "goal-head";
+    const name = document.createElement("b");
+    name.className = "goal-n";
+    name.textContent = g.nom;
+    const amount = document.createElement("span");
+    amount.className = "goal-a";
+    amount.textContent = `${money(g.epargne)} / ${money(g.cible)}`;
+    head.append(name, amount);
+
+    const track = document.createElement("span");
+    track.className = "goal-track";
+    const fill = document.createElement("i");
+    fill.style.width = `${pct}%`;
+    track.append(fill);
+
+    const sub = document.createElement("span");
+    sub.className = "goal-sub";
+    const monthly = goalMonthly(g);
+    sub.textContent = done
+      ? "Objectif atteint"
+      : `${pct} %` +
+        (g.echeance ? ` · pour ${monthName(g.echeance).toLowerCase()} ${g.echeance.slice(0, 4)}` : "") +
+        (monthly ? ` · ${money(monthly)} par mois` : "");
+
+    row.append(head, track, sub);
+    row.setAttribute("aria-label", `${g.nom}, ${money(g.epargne)} sur ${money(g.cible)}, ${pct} %`);
+    list.append(row);
+  }
+}
+
+function openGoalSheet(goal) {
+  state.editingGoal = goal ? goal.id : null;
+  $("#goal-title").textContent = goal ? "Modifier l'objectif" : "Nouvel objectif";
+  $("#goal-name").value = goal ? goal.nom : "";
+  $("#goal-target").value = goal ? toInput(goal.cible) : "";
+  $("#goal-saved").value = goal && goal.epargne ? toInput(goal.epargne) : "";
+  $("#goal-date").value = goal?.echeance ?? "";
+  $("#goal-deposit").value = "";
+  $("#goal-name-error").hidden = true;
+  $("#goal-target-error").hidden = true;
+  $("#goal-delete").hidden = !goal;
+  $("#goal-deposit-block").hidden = !goal;
+  updateGoalPace();
+  openSheet("#sheet-goal");
+}
+
+function updateGoalPace() {
+  const cible = parseAmount($("#goal-target").value);
+  const saved = parseAmount($("#goal-saved").value) ?? 0;
+  const echeance = $("#goal-date").value;
+  const hint = $("#goal-pace");
+  const monthly = cible && echeance ? goalMonthly({ cible, epargne: saved, echeance }) : null;
+  hint.hidden = !monthly;
+  if (monthly) hint.textContent = `Pour y arriver : ${money(monthly)} à mettre de côté chaque mois.`;
+}
+for (const id of ["#goal-target", "#goal-saved", "#goal-date"]) $(id).addEventListener("input", updateGoalPace);
+
+$("#goal-add").addEventListener("click", () => openGoalSheet(null));
+$("#goal-list").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-goal]");
+  const goal = row && state.data.goals.find((g) => g.id === row.dataset.goal);
+  if (goal) openGoalSheet(goal);
+});
+
+$("#goal-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const nom = $("#goal-name").value.trim();
+  const cible = parseAmount($("#goal-target").value);
+  $("#goal-name-error").hidden = Boolean(nom);
+  $("#goal-target-error").hidden = cible !== null;
+  if (!nom) return $("#goal-name").focus();
+  if (cible === null) return $("#goal-target").focus();
+  const payload = {
+    nom,
+    cible,
+    epargne: parseAmount($("#goal-saved").value) ?? 0,
+    echeance: $("#goal-date").value || null,
+  };
+  if (state.editingGoal) {
+    const goal = state.data.goals.find((g) => g.id === state.editingGoal);
+    const restore = snapshotOf(goal);
+    Object.assign(goal, payload);
+    save();
+    closeSheets();
+    render();
+    return offerUndo("Objectif modifié.", restore);
+  }
+  state.data.goals.push({ id: uid(), createdAt: Date.now(), ...payload });
+  save();
+  closeSheets();
+  render();
+  toast("Objectif créé.");
+});
+
+$("#goal-deposit-btn").addEventListener("click", () => {
+  const goal = state.data.goals.find((g) => g.id === state.editingGoal);
+  const cents = parseAmount($("#goal-deposit").value);
+  if (!goal || cents === null) return toast("Entre un montant à verser.");
+  const restore = snapshotOf(goal);
+  goal.epargne += cents;
+  save();
+  closeSheets();
+  render();
+  offerUndo(goal.epargne >= goal.cible ? `${money(cents)} versés — objectif atteint !` : `${money(cents)} versés sur « ${goal.nom} ».`, restore);
+});
+
+$("#goal-delete").addEventListener("click", (e) => {
+  const goal = state.data.goals.find((g) => g.id === state.editingGoal);
+  armDanger(e.currentTarget, "Confirmer la suppression ?", () => {
+    state.data.goals = state.data.goals.filter((g) => g.id !== state.editingGoal);
+    save();
+    closeSheets();
+    render();
+    offerUndo("Objectif supprimé.", () => {
+      if (goal) state.data.goals.push(goal);
+    });
+  });
+});
+
+const EMPTY_ICONS = {
+  list: '<path d="M5 4.5h14v15l-2.3-1.6-2.4 1.6-2.3-1.6-2.4 1.6-2.3-1.6L5 19.5z"/><path d="M8.5 9h7M8.5 12.5h7"/>',
+  target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 12l5-5"/>',
+  chart: '<path d="M5.5 20V11M12 20V4.5M18.5 20v-6.5"/>',
+  repeat: '<path d="M4.5 12a7.5 7.5 0 0 1 12.8-5.3L20 9.2M20 4.7v4.5h-4.5M19.5 12a7.5 7.5 0 0 1-12.8 5.3L4 14.8M4 19.3v-4.5h4.5"/>',
+  wallet: '<path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><path d="M4 7.5V17a2 2 0 0 0 2 2h13V8H6.5A2.5 2.5 0 0 1 4 7.5z"/><circle cx="15.5" cy="13.5" r="1"/>',
+};
+
+function emptyBlock(title, sub, action, icon) {
   const box = document.createElement("div");
   box.className = "empty";
+  if (icon && EMPTY_ICONS[icon]) {
+    const art = document.createElementNS(SVG_NS, "svg");
+    art.setAttribute("viewBox", "0 0 24 24");
+    art.setAttribute("aria-hidden", "true");
+    art.setAttribute("class", "empty-art");
+    art.innerHTML = EMPTY_ICONS[icon]; // chaînes statiques ci-dessus, jamais de donnée saisie
+    box.append(art);
+  }
   const b = document.createElement("b");
   b.textContent = title;
   const s = document.createElement("span");
   s.textContent = sub;
   box.append(b, s);
+  if (action) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-sm empty-action";
+    btn.textContent = action.label;
+    btn.addEventListener("click", action.run);
+    box.append(btn);
+  }
   return box;
 }
 
@@ -821,7 +1178,10 @@ function periodRange() {
 
 /** Nombre de réglages de filtre qui s'écartent de l'affichage par défaut. */
 const activeFilters = () =>
-  (state.period !== "mois" ? 1 : 0) + (state.amountMin !== null ? 1 : 0) + (state.amountMax !== null ? 1 : 0);
+  (state.period !== "mois" ? 1 : 0) +
+  (state.amountMin !== null ? 1 : 0) +
+  (state.amountMax !== null ? 1 : 0) +
+  (state.onlyAvoidable ? 1 : 0);
 
 function renderFilters() {
   const n = activeFilters();
@@ -837,6 +1197,8 @@ function renderFilters() {
     b.classList.toggle("on", on);
     b.setAttribute("aria-checked", String(on));
   }
+  $("#filter-avoidable").classList.toggle("on", state.onlyAvoidable);
+  $("#filter-avoidable").setAttribute("aria-pressed", String(state.onlyAvoidable));
   $("#select-toggle").textContent = state.selecting ? "Terminer" : "Sélectionner";
   $("#select-toggle").setAttribute("aria-pressed", String(state.selecting));
   $("#select-toggle").classList.toggle("on", state.selecting);
@@ -874,6 +1236,7 @@ function renderDepenses() {
   if (range) items = items.filter((t) => t.date >= range.from && t.date <= range.to);
   if (state.amountMin !== null) items = items.filter((t) => t.montant >= state.amountMin);
   if (state.amountMax !== null) items = items.filter((t) => t.montant <= state.amountMax);
+  if (state.onlyAvoidable) items = items.filter((t) => t.kind === "depense" && isAvoidable(t));
 
   // un filtre d'enveloppe ne s'applique qu'aux dépenses : un revenu n'en a pas
   if (filter) items = items.filter((t) => t.kind === "depense" && t.envelopeId === filter.id);
@@ -887,16 +1250,28 @@ function renderDepenses() {
 
   items.sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : b.date.localeCompare(a.date)));
 
+  /* Sur plusieurs années, « Tout » fait des milliers de lignes : on n'en monte que
+     soixante à la fois. Le compteur et « Tout sélectionner » portent, eux, sur tout. */
+  const limitKey = [state.month, state.query, state.period, state.dateFrom, state.dateTo, state.amountMin, state.amountMax, state.onlyAvoidable, state.filterEnv].join("|");
+  if (state.limitKey !== limitKey) {
+    state.limitKey = limitKey;
+    state.limit = PAGE_SIZE;
+  }
+  state.itemKeys = items.map(keyOf);
+  const allItems = items;
+  items = items.slice(0, state.limit);
+
   // la sélection ne garde que ce qui est encore affiché
-  const shownKeys = new Set(items.map(keyOf));
+  const shownKeys = new Set(state.itemKeys);
   for (const k of state.picked) if (!shownKeys.has(k)) state.picked.delete(k);
-  renderBulkBar(items);
+  renderBulkBar(allItems);
 
   // un filtre ou une recherche pose une question chiffrée (« combien chez eux ? ») :
   // le total de ce qui est affiché est la réponse, il n'a pas à être fait de tête
   const sum = $("#tx-sum");
-  sum.hidden = !(searching || filter || activeFilters()) || !items.length;
+  sum.hidden = !(searching || filter || activeFilters()) || !allItems.length;
   if (!sum.hidden) {
+    const items = allItems;
     const out = items.filter((t) => t.kind === "depense").reduce((n, t) => n + t.montant, 0);
     const inc = items.filter((t) => t.kind === "revenu").reduce((n, t) => n + t.montant, 0);
     const bits = [`${items.length} mouvement${items.length > 1 ? "s" : ""}`];
@@ -921,7 +1296,9 @@ function renderDepenses() {
               ? "Aucune dépense dans cette enveloppe."
               : narrowed
                 ? "Rien à afficher."
-                : "Touche le bouton + pour noter une dépense ou un revenu."
+                : "Touche le bouton + pour noter une dépense ou un revenu.",
+        !query && !activeFilters() && !filter ? { label: "Ajouter une dépense", run: () => openTxSheet(null) } : undefined,
+        "list"
       )
     );
     return;
@@ -968,7 +1345,8 @@ function renderDepenses() {
     label.textContent =
       (tx.recurringId ? "↻ " : "") + (tx.libelle || (revenu ? "Revenu" : env ? env.nom : "Dépense"));
     const sub = document.createElement("span");
-    sub.textContent = revenu ? "Revenu" : env ? env.nom : "Sans enveloppe";
+    sub.textContent =
+      (revenu ? "Revenu" : env ? env.nom : "Sans enveloppe") + (!revenu && isAvoidable(tx) ? " · évitable" : "");
     text.append(label, sub);
 
     const amount = document.createElement("span");
@@ -978,7 +1356,18 @@ function renderDepenses() {
     row.append(dot, text, amount);
     list.append(row);
   }
+
+  if (allItems.length > items.length) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.id = "tx-more";
+    more.className = "btn more-btn";
+    more.textContent = `Afficher plus (${allItems.length - items.length} restants)`;
+    list.append(more);
+  }
 }
+
+const PAGE_SIZE = 60;
 
 /** Barre d'actions du mode sélection : compteur, « tout », et ce qu'on peut faire. */
 function renderBulkBar(items) {
@@ -1017,25 +1406,48 @@ function renderBilan() {
       `Revenus +${money(income)} · solde ${net < 0 ? "−" : "+"}${money(Math.abs(net))}`;
   }
 
-  // la raison d'être de l'enveloppe « Évitable » : voir d'un coup ce qui aurait pu ne pas être dépensé
-  const evitable = state.data.envelopes.find((e) => noAccent(e.nom) === "evitable");
-  const avoidable = evitable ? spentByEnv(state.month)[evitable.id] || 0 : 0;
+  // la part « évitable » : dépenses étiquetées (ou rangées dans une enveloppe nommée ainsi)
+  const avoidable = avoidableSpent(state.month);
   $("#bilan-evitable").hidden = !avoidable;
   if (avoidable) {
-    $("#bilan-evitable").style.setProperty("--c", evitable.couleur);
+    $("#bilan-evitable").style.setProperty("--c", EVITABLE_COLOR);
     const part = Math.round((avoidable / spent) * 100);
     $("#bilan-evitable").textContent = `dont évitable ${money(avoidable)} · ${part} % des dépenses`;
   }
 
+  /* Fenêtre du graphique : six mois (défaut), douze mois, ou l'année civile du mois affiché.
+     À douze barres il n'y a plus de place pour un montant sous chacune : seule la barre
+     choisie porte le sien, et les mois s'abrègent à leur initiale. */
+  const mode = state.data.settings.histMode;
   const keys = [];
-  for (let i = 5; i >= 0; i--) keys.push(shiftMonth(state.month, -i));
+  if (mode === "annee") for (let m = 1; m <= 12; m++) keys.push(`${state.month.slice(0, 4)}-${pad(m)}`);
+  else for (let i = (mode === "12" ? 11 : 5); i >= 0; i--) keys.push(shiftMonth(state.month, -i));
+  const dense = keys.length > 6;
   const totals = keys.map((k) => totalSpent(k));
   const max = Math.max(...totals, 1);
+
+  $("#hist-title").textContent =
+    mode === "annee" ? `Année ${state.month.slice(0, 4)}` : mode === "12" ? "12 derniers mois" : "Six derniers mois";
+  for (const b of document.querySelectorAll("[data-hist]")) {
+    const on = b.dataset.hist === mode;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
 
   const hist = $("#hist");
   const labels = $("#hist-labels");
   hist.replaceChildren();
   labels.replaceChildren();
+  // à douze barres, le montant du mois choisi se lit dans une ligne au-dessus du graphique
+  const note = $("#hist-note");
+  note.hidden = !dense;
+  if (dense) {
+    const at = keys.indexOf(state.month);
+    note.textContent = at >= 0 ? `${monthName(state.month)} ${state.month.slice(0, 4)} : ${money(totals[at])}` : "Touche un mois pour le détail";
+    note.classList.toggle("is-empty", at < 0);
+  }
+  hist.classList.toggle("dense", dense);
+  labels.classList.toggle("dense", dense);
   // les barres portaient un title= : illisible au doigt, et surtout inerte —
   // le geste évident (toucher un mois pour l'ouvrir) ne faisait rien
   keys.forEach((key, i) => {
@@ -1056,11 +1468,75 @@ function renderBilan() {
     hist.append(bar);
 
     const tag = document.createElement("span");
-    tag.textContent = monthName(key, "short").replace(".", "");
+    tag.textContent = dense ? monthName(key, "narrow") : monthName(key, "short").replace(".", "");
     labels.append(tag);
   });
 
+  renderTrend(keys);
   renderRepartition(spent);
+}
+
+/* Par enveloppe : sur la fenêtre du graphique, la dépense de chaque mois en petites barres,
+   la moyenne mensuelle, et sa place par rapport au budget d'aujourd'hui. Toucher une ligne
+   ouvre ses dépenses sur cette période. */
+function renderTrend(keys) {
+  const box = $("#env-trend");
+  box.replaceChildren();
+  const table = spentTable();
+  const rows = allEnvelopes()
+    .map((env) => {
+      const series = keys.map((k) => table[k]?.[env.id] || 0);
+      return { env, series, total: series.reduce((a, b) => a + b, 0) };
+    })
+    .filter((r) => r.total > 0)
+    .sort((a, b) => b.total - a.total);
+
+  $("#trend-title").textContent = `Par enveloppe · ${keys.length === 12 ? "12 mois" : keys.length === 6 ? "6 mois" : "année"}`;
+  if (!rows.length) {
+    box.append(emptyBlock("Rien à comparer", "Les dépenses des mois affichés apparaîtront ici, enveloppe par enveloppe.", undefined, "chart"));
+    return;
+  }
+  const nonEmpty = keys.filter((k) => totalSpent(k) > 0).length || 1;
+  for (const { env, series, total } of rows) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "trend";
+    row.dataset.trend = env.id;
+    row.style.setProperty("--c", env.couleur);
+
+    const text = document.createElement("span");
+    text.className = "trend-t";
+    const name = document.createElement("b");
+    name.textContent = env.nom;
+    const avg = Math.round(total / nonEmpty);
+    const budget = budgetFor(env, todayIso().slice(0, 7));
+    const sub = document.createElement("span");
+    sub.textContent = `moy. ${compactMoney(avg)}/mois` + (budget ? ` · budget ${compactMoney(budget)}` : "");
+    if (budget && avg > budget) sub.classList.add("is-over");
+    text.append(name, sub);
+
+    const spark = document.createElement("span");
+    spark.className = "spark";
+    spark.setAttribute("aria-hidden", "true");
+    const peak = Math.max(...series, 1);
+    series.forEach((v, i) => {
+      const bar = document.createElement("i");
+      bar.style.height = `${Math.max((v / peak) * 100, 6)}%`;
+      if (v > 0) bar.classList.add("on");
+      spark.append(bar);
+      void i;
+    });
+
+    const amount = document.createElement("span");
+    amount.className = "trend-a";
+    amount.textContent = money(total);
+
+    row.append(badge("env-dot", env.couleur, initialOf(env.nom)), text, spark, amount);
+    row.setAttribute("aria-label", `${env.nom} : ${money(total)} sur la période, moyenne ${money(avg)} par mois`);
+    row.dataset.from = `${keys[0]}-01`;
+    row.dataset.to = `${keys[keys.length - 1]}-${pad(daysIn(keys[keys.length - 1]))}`;
+    box.append(row);
+  }
 }
 
 /* Répartition : une barre empilée à 100 % — la forme faite pour la
@@ -1075,7 +1551,7 @@ function renderRepartition(total) {
 
   const perEnv = spentByEnv(state.month);
   let rows = [
-    ...envelopes().map((e) => ({ id: e.id, nom: e.nom, couleur: e.couleur, value: perEnv[e.id] || 0 })),
+    ...allEnvelopes().map((e) => ({ id: e.id, nom: e.nom, couleur: e.couleur, value: perEnv[e.id] || 0 })),
     { id: NO_ENV, nom: "Sans enveloppe", couleur: null, value: perEnv[NO_ENV] || 0 },
   ]
     .filter((r) => r.value > 0)
@@ -1084,7 +1560,7 @@ function renderRepartition(total) {
   $("#chart").hidden = !rows.length;
   $("#chart-mode").hidden = !rows.length; // rien à mettre en forme sans dépense
   if (!rows.length) {
-    legend.append(emptyBlock("Aucune dépense", "Le bilan se remplit dès la première dépense du mois."));
+    legend.append(emptyBlock("Aucune dépense", "Le bilan se remplit dès la première dépense du mois.", { label: "Ajouter une dépense", run: () => openTxSheet(null) }, "chart"));
     return;
   }
 
@@ -1250,7 +1726,87 @@ function renderReglages() {
 
 /* ---------------------------------------------------------- récurrent : calendrier + listes */
 
+/** Prochaines échéances dans les 7 jours : règles actives dont la date tombe d'ici là
+    et qui n'ont pas déjà été tamponnées pour ce mois-ci. */
+function upcomingRules() {
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const out = [];
+  for (const rule of recurringRules().filter((r) => r.actif)) {
+    for (const delta of [0, 1]) {
+      const month = shiftMonth(todayIso().slice(0, 7), delta);
+      const day = effDay(rule, month);
+      const date = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, day);
+      const days = Math.round((date - start) / 86400000);
+      if (days < 0 || days > 7) continue;
+      const list = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
+      // déjà tombée ce mois-ci : elle est dans l'historique, pas « à venir »
+      if (list.some((t) => t.recurringId === rule.id && monthOf(t.date) === month)) continue;
+      out.push({ rule, days, date });
+      break;
+    }
+  }
+  return out.sort((a, b) => a.days - b.days);
+}
+
+function renderUpcoming() {
+  const list = $("#upcoming-list");
+  list.replaceChildren();
+  const items = upcomingRules();
+  if (!items.length) {
+    list.append(emptyBlock("Rien dans les 7 jours", "Aucune échéance récurrente n'est attendue d'ici là."));
+    list.firstChild.style.padding = "10px 8px 14px";
+  }
+  for (const { rule, days, date } of items) {
+    const icon = iconFor(rule);
+    const row = document.createElement("div");
+    row.className = "up-row";
+    const chip = document.createElement("span");
+    chip.className = "chip chip-sm";
+    chip.style.setProperty("--c", icon.couleur);
+    chip.textContent = icon.mono;
+    chip.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span");
+    text.className = "tx-t";
+    const name = document.createElement("b");
+    name.textContent = rule.libelle;
+    const sub = document.createElement("span");
+    sub.textContent = days === 0 ? "Aujourd'hui" : days === 1 ? "Demain" : `Dans ${days} jours · ${capitalize(longDate(date))}`;
+    text.append(name, sub);
+    const amount = document.createElement("span");
+    amount.className = "tx-a " + (rule.type === "revenu" ? "is-income" : "is-expense");
+    amount.textContent = (rule.type === "revenu" ? "+" : "−") + money(rule.montant);
+    row.append(chip, text, amount);
+    list.append(row);
+  }
+
+  // charges fixes contre revenus récurrents : ce qui reste une fois le fixe payé
+  const sum = (type) => recurringRules(type).filter((r) => r.actif).reduce((n, r) => n + r.montant, 0);
+  const fixed = sum("depense");
+  const incomes = sum("revenu");
+  const free = incomes - fixed;
+  const box = $("#fixed-sum");
+  box.hidden = !fixed && !incomes;
+  box.replaceChildren();
+  for (const [k, v, cls] of [
+    ["Charges fixes", `−${money(fixed)}`, "is-expense"],
+    ["Revenus fixes", `+${money(incomes)}`, "is-income"],
+    [free < 0 ? "Manque" : "Reste libre", `${free < 0 ? "−" : "+"}${money(Math.abs(free))}`, free < 0 ? "is-expense" : "is-income"],
+  ]) {
+    const cell = document.createElement("div");
+    const kk = document.createElement("p");
+    kk.className = "flow-k";
+    kk.textContent = k;
+    const vv = document.createElement("p");
+    vv.className = `flow-v ${cls}`;
+    vv.textContent = v;
+    cell.append(kk, vv);
+    box.append(cell);
+  }
+}
+
 function renderRecurrent() {
+  renderUpcoming();
   renderCalendar();
   renderRecurringList("revenu", "#income-list", "Aucun revenu récurrent", "Salaire, versement régulier… ajoute-le une fois, il revient seul chaque mois.");
   renderRecurringList("depense", "#recurring-list", "Aucune dépense récurrente", "Le loyer, un abonnement… ajoute-le une fois, il revient seul chaque mois.");
@@ -1278,7 +1834,7 @@ function renderCalendar() {
 
   for (let day = 1; day <= daysInMonth; day++) {
     const iso = `${state.month}-${pad(day)}`;
-    const here = rules.filter((r) => r.jour === day);
+    const here = rules.filter((r) => effDay(r, state.month) === day);
 
     const cell = document.createElement("button");
     cell.type = "button";
@@ -1325,7 +1881,7 @@ function renderCalendarDay(monthRules) {
   heading.textContent = capitalize(longDate(new Date(`${state.calDay}T12:00:00`)));
   panel.append(heading);
 
-  const items = monthRules.filter((r) => r.jour === day);
+  const items = monthRules.filter((r) => effDay(r, state.month) === day);
   if (!items.length) {
     panel.append(emptyBlock("Rien ce jour-là", "Aucune dépense ni revenu récurrent prévu."));
     return;
@@ -1387,7 +1943,9 @@ function renderRecurringList(type, listId, emptyTitle, emptySub) {
     name.textContent = rule.libelle;
     const sub = document.createElement("span");
     const where = type === "revenu" ? "Revenu" : (envById(rule.envelopeId)?.nom ?? "");
-    sub.textContent = rule.actif ? `${where} · le ${rule.jour}` : `${where} · en pause`;
+    sub.textContent = rule.actif
+      ? `${where} · ${rule.jour > 28 ? `le ${rule.jour} (ou fin de mois)` : `le ${rule.jour}`}`
+      : `${where} · en pause`;
     text.append(name, sub);
 
     const amount = document.createElement("span");
@@ -1407,8 +1965,13 @@ function renderRecurringList(type, listId, emptyTitle, emptySub) {
    masquer le tiroir tout juste ouvert par le minuteur encore en vol. */
 let closeTimer;
 
+let opener = null;
+
 function openSheet(id) {
   clearTimeout(closeTimer);
+  // le déclencheur n'est retenu qu'à la PREMIÈRE ouverture : passer d'un tiroir à l'autre ne le perd pas
+  if (!document.querySelector(".sheet.show")) opener = document.activeElement;
+  $(".app").inert = true; // ni Tab ni VoiceOver n'atteignent ce qui est derrière
   $("#scrim").hidden = false;
   for (const other of document.querySelectorAll(".sheet")) {
     if (other.id === id.slice(1)) continue;
@@ -1420,11 +1983,18 @@ function openSheet(id) {
   requestAnimationFrame(() => {
     $("#scrim").classList.add("show");
     sheet.classList.add("show");
+    sheet.tabIndex = -1;
+    sheet.focus({ preventScroll: true }); // la saisie du montant reprend ensuite la main, si elle doit
   });
 }
 
 function closeSheets() {
   clearTimeout(closeTimer);
+  if (document.querySelector(".sheet.show")) {
+    if ($("#onboard").hidden) $(".app").inert = false;
+    if (opener && document.contains(opener)) opener.focus({ preventScroll: true });
+    opener = null;
+  }
   $("#scrim").classList.remove("show");
   for (const sheet of document.querySelectorAll(".sheet")) sheet.classList.remove("show");
   closeTimer = setTimeout(() => {
@@ -1480,21 +2050,101 @@ function openTxSheet(tx, prefill = null, type = "depense") {
   }
 
   state.draftEnv = tx && type === "depense" ? tx.envelopeId : (prefill?.envId ?? first?.id ?? null);
+  // la suggestion d'après le libellé ne pousse jamais contre un choix déjà fait
+  state.draftEnvManual = Boolean(tx || prefill?.envId);
+  state.draftEvManual = Boolean(tx || prefill);
   $("#tx-amount").value = tx ? toInput(tx.montant) : (prefill?.montantText ?? "");
   sizeAmountInput($("#tx-amount"));
   $("#tx-label").value = tx ? tx.libelle : (prefill?.libelle ?? "");
   $("#tx-date").value = tx ? tx.date : todayIso();
+  $("#tx-evitable").checked = Boolean(tx ? tx.evitable : prefill?.evitable);
   $("#tx-amount-error").hidden = true;
   $("#tx-delete").hidden = !tx;
   $("#tx-duplicate").hidden = !tx;
 
   renderTxEnvPicker();
   updateTxTypeUI(Boolean(tx));
+  updateLabelSuggestions();
 
   openSheet("#sheet-tx");
   // un montant déjà rempli n'a pas besoin du clavier ; sinon on le propose tout de suite
   if (!tx && !prefill?.montantText) setTimeout(() => $("#tx-amount").focus(), 320);
 }
+
+/* ---- suggestion d'enveloppe d'après le libellé ----
+   « Monoprix » a déjà été rangé douze fois dans Courses : inutile de le redemander.
+   On regroupe les dépenses passées par libellé (sans accent ni casse) ; si ce qui est
+   tapé désigne UN libellé connu, son enveloppe la plus fréquente est présélectionnée,
+   et trois suggestions s'offrent en un geste. Un choix manuel arrête tout. */
+function labelGroups(query) {
+  const q = noAccent(query);
+  if (q.length < 2) return [];
+  const groups = new Map();
+  for (const t of state.data.expenses) {
+    if (!t.libelle) continue;
+    const key = noAccent(t.libelle);
+    if (!(key.startsWith(q) || key.split(/\s+/).some((w) => w.startsWith(q)))) continue;
+    const g = groups.get(key) || { key, label: t.libelle, n: 0, last: 0, envs: new Map(), ev: 0 };
+    const at = Date.parse(t.date) || 0;
+    if (at >= g.last) {
+      g.last = at;
+      g.label = t.libelle;
+    }
+    g.n++;
+    g.envs.set(t.envelopeId, (g.envs.get(t.envelopeId) || 0) + 1);
+    if (t.evitable === true) g.ev++;
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((a, b) => b.n - a.n || b.last - a.last);
+}
+const topEnvOf = (g) => [...g.envs].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+function applyGroup(g, { fill }) {
+  const envId = topEnvOf(g);
+  if (fill) $("#tx-label").value = g.label;
+  if (!state.draftEnvManual && envId && envelopes().some((e) => e.id === envId)) {
+    state.draftEnv = envId;
+    renderTxEnvPicker();
+    $("#env-suggest-hint").textContent = `Rangée dans « ${envById(envId).nom} » comme « ${g.label} » (${g.n} fois).`;
+    $("#env-suggest-hint").hidden = false;
+  }
+  if (!state.draftEvManual) $("#tx-evitable").checked = g.ev * 2 > g.n;
+}
+
+function updateLabelSuggestions() {
+  const box = $("#label-suggest");
+  const hint = $("#env-suggest-hint");
+  box.replaceChildren();
+  if (state.editingTx || state.draftTxType !== "depense") {
+    box.hidden = true;
+    hint.hidden = true;
+    return;
+  }
+  const text = $("#tx-label").value;
+  const groups = labelGroups(text);
+  const typed = noAccent(text);
+  for (const g of groups.filter((x) => x.key !== typed).slice(0, 3)) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.suggest = g.key;
+    b.textContent = g.label;
+    box.append(b);
+  }
+  box.hidden = !box.children.length;
+  const best = groups.find((g) => g.key === typed) || (groups.length === 1 ? groups[0] : null);
+  if (best) applyGroup(best, { fill: false });
+  else if (!text.trim()) hint.hidden = true;
+}
+
+$("#tx-label").addEventListener("input", updateLabelSuggestions);
+$("#tx-evitable").addEventListener("change", () => (state.draftEvManual = true));
+$("#label-suggest").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-suggest]");
+  const g = btn && labelGroups($("#tx-label").value).find((x) => x.key === btn.dataset.suggest);
+  if (!g) return;
+  applyGroup(g, { fill: true });
+  updateLabelSuggestions();
+});
 
 function renderTxEnvPicker() {
   const picker = $("#tx-env-picker");
@@ -1526,6 +2176,7 @@ function updateTxTypeUI(editing) {
   }
   $("#tx-type").hidden = editing;
   $("#tx-env-block").hidden = revenu;
+  $("#tx-evitable-row").hidden = revenu;
   $("#tx-label").placeholder = revenu ? "Salaire, remboursement, prime…" : "Monoprix, essence, resto…";
   $("#tx-title").textContent = editing
     ? revenu
@@ -1544,7 +2195,14 @@ function openEnvSheet(env) {
 
   $("#env-title").textContent = env ? "Modifier l'enveloppe" : "Nouvelle enveloppe";
   $("#env-name").value = env ? env.nom : "";
-  $("#env-budget").value = env ? toInput(env.budget) : "";
+  $("#env-budget").value = env ? toInput(budgetFor(env, state.month)) : "";
+  $("#env-budget-past").checked = false;
+  $("#env-past-row").hidden = !env;
+  $("#env-report").checked = Boolean(env?.report);
+  $("#env-budget-hint").textContent = env
+    ? `Ce budget vaut pour ${monthName(state.month).toLowerCase()} ${state.month.slice(0, 4)} et les mois suivants ; les mois précédents gardent le leur.`
+    : "";
+  $("#env-budget-hint").hidden = !env;
   $("#env-name-error").hidden = true;
   $("#env-delete").hidden = !env;
 
@@ -1581,6 +2239,7 @@ function openRecurringSheet(rule, defaultType = "depense") {
   sizeAmountInput($("#recurring-amount"));
   $("#recurring-label").value = rule ? rule.libelle : "";
   $("#recurring-day").value = rule ? String(rule.jour) : "";
+  $("#recurring-evitable").checked = Boolean(rule?.evitable);
   $("#recurring-amount-error").hidden = true;
   $("#recurring-label-error").hidden = true;
   $("#recurring-day-error").hidden = true;
@@ -1621,6 +2280,7 @@ function updateRecurringTypeUI(editing) {
     b.setAttribute("aria-checked", String(on));
   }
   $("#recurring-env-block").hidden = state.draftRecurringType === "revenu";
+  $("#recurring-evitable-row").hidden = state.draftRecurringType === "revenu";
 
   const revenu = state.draftRecurringType === "revenu";
   $("#recurring-title").textContent = editing
@@ -1676,6 +2336,76 @@ function renderIconPicker() {
     b.setAttribute("aria-label", preset.nom);
     b.setAttribute("aria-checked", String(on));
     picker.append(b);
+  }
+}
+
+/* Glisser la poignée (ou l'en-tête) vers le bas ferme le tiroir : elle le promettait sans le faire. */
+let drag = null;
+document.addEventListener("pointerdown", (e) => {
+  const sheet = e.target.closest(".sheet.show");
+  if (!sheet || !e.target.closest(".sheet-grip, .sheet-head") || e.target.closest("button, input")) return;
+  drag = { sheet, y: e.clientY, t: performance.now(), dy: 0 };
+  sheet.style.transition = "none";
+});
+document.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  drag.dy = Math.max(0, e.clientY - drag.y);
+  drag.sheet.style.transform = `translateY(${drag.dy}px)`;
+});
+function endDrag() {
+  if (!drag) return;
+  const { sheet, dy, t } = drag;
+  drag = null;
+  const speed = dy / Math.max(1, performance.now() - t);
+  sheet.style.transition = "";
+  sheet.style.transform = "";
+  if (dy > 110 || (dy > 40 && speed > 0.6)) closeSheets();
+}
+document.addEventListener("pointerup", endDrag);
+document.addEventListener("pointercancel", endDrag);
+
+/* Un groupe `role="radiogroup"` se parcourt aux flèches, comme un vrai : le clavier et
+   VoiceOver n'avaient que Tab, et chaque pastille était un arrêt. */
+document.addEventListener("keydown", (e) => {
+  if (!/^(Arrow(Left|Right|Up|Down)|Home|End)$/.test(e.key)) return;
+  const current = e.target.closest?.('[role="radio"]');
+  const group = current?.closest('[role="radiogroup"]');
+  if (!group) return;
+  const radios = [...group.querySelectorAll('[role="radio"]')].filter((r) => r.closest('[role="radiogroup"]') === group && !r.disabled);
+  const at = radios.indexOf(current);
+  const next =
+    e.key === "Home" ? 0 : e.key === "End" ? radios.length - 1
+    : (at + (/Right|Down/.test(e.key) ? 1 : -1) + radios.length) % radios.length;
+  e.preventDefault();
+  const gid = group.id;
+  radios[next].focus();
+  radios[next].click();
+  // beaucoup de groupes se redessinent au choix : on remet le focus sur le choix retenu
+  requestAnimationFrame(() => {
+    const g = gid ? document.getElementById(gid) : group;
+    (g?.querySelector('[aria-checked="true"]') || g?.querySelector(".on"))?.focus();
+  });
+});
+
+/* Retour tactile. Safari iOS n'offre pas navigator.vibrate ; depuis iOS 17.4, basculer un
+   <input switch> déclenche pourtant le même petit tic. Sans effet (et sans erreur) ailleurs. */
+let hapticLabel = null;
+function haptic() {
+  try {
+    if (navigator.vibrate) return void navigator.vibrate(10);
+    if (!hapticLabel) {
+      hapticLabel = document.createElement("label");
+      hapticLabel.setAttribute("aria-hidden", "true");
+      hapticLabel.style.cssText = "position:fixed;left:-100px;top:-100px;opacity:0;pointer-events:none";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.setAttribute("switch", "");
+      hapticLabel.append(box);
+      document.body.append(hapticLabel);
+    }
+    hapticLabel.click();
+  } catch {
+    /* pas de retour tactile sur cet appareil */
   }
 }
 
@@ -1747,13 +2477,25 @@ function toast(message, action) {
   toastTimer = setTimeout(hideToast, action ? 7000 : 2600);
 }
 
+/** Photographie un objet et rend la fonction qui le remet EXACTEMENT dans cet état
+    (y compris en retirant les clés apparues depuis). */
+function snapshotOf(obj) {
+  const before = { ...obj };
+  return () => {
+    for (const k of Object.keys(obj)) if (!(k in before)) delete obj[k];
+    Object.assign(obj, before);
+  };
+}
+
 /* Annuler une suppression. Plutôt que de restaurer un instantané de TOUTES les
    données (ce qui effacerait ce qui a été noté dans l'intervalle), chaque
    suppression fournit sa propre remise en place : on ne rend que ce qu'on a pris. */
 function offerUndo(message, restore) {
+  haptic();
   toast(message, {
     label: "Annuler",
     run: () => {
+      haptic();
       restore();
       save();
       render();
@@ -1857,13 +2599,6 @@ for (const bar of ["#tabbar", "#topbar"]) {
   });
 }
 
-// le titre du mois ramène au mois en cours quand on s'en est éloigné
-$("#month-label").addEventListener("click", () => {
-  const now = todayIso().slice(0, 7);
-  if (state.month === now || state.view === "reglages") return;
-  goToMonth(now);
-});
-
 $("#tx-search").addEventListener("input", (e) => {
   state.query = e.target.value;
   renderDepenses();
@@ -1923,6 +2658,29 @@ for (const id of ["#chart-bar", "#pie-svg"]) {
   });
 }
 
+$("#hist-mode").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-hist]");
+  if (!btn) return;
+  state.data.settings.histMode = btn.dataset.hist;
+  save();
+  render();
+});
+
+$("#env-trend").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-trend]");
+  if (!row) return;
+  state.filterEnv = row.dataset.trend;
+  state.query = "";
+  $("#tx-search").value = "";
+  state.period = "perso";
+  state.dateFrom = row.dataset.from;
+  state.dateTo = row.dataset.to;
+  $("#date-from").value = state.dateFrom;
+  $("#date-to").value = state.dateTo;
+  state.view = "depenses";
+  render();
+});
+
 $("#hist").addEventListener("click", (e) => {
   const bar = e.target.closest("[data-month]");
   if (bar && bar.dataset.month !== state.month) goToMonth(bar.dataset.month);
@@ -1964,6 +2722,18 @@ function moveEnvelope(id, dir) {
 }
 
 $("#env-list").addEventListener("click", (e) => {
+  const restore = e.target.closest("[data-restore]");
+  if (restore) {
+    const env = envById(restore.dataset.restore);
+    if (env) {
+      env.archivee = false;
+      env.ordre = state.data.envelopes.length;
+      save();
+      render();
+      toast(`« ${env.nom} » est de retour.`);
+    }
+    return;
+  }
   const move = e.target.closest("[data-move]");
   if (move) return moveEnvelope(move.dataset.move, Number(move.dataset.dir));
   if (e.target.closest("#env-add")) return openEnvSheet(null);
@@ -1980,6 +2750,11 @@ $("#env-list").addEventListener("click", (e) => {
 });
 
 $("#tx-list").addEventListener("click", (e) => {
+  if (e.target.closest("#tx-more")) {
+    state.limit += PAGE_SIZE;
+    return renderDepenses();
+  }
+  if (justSwiped) return; // le doigt qui relâche un balayage ne « touche » pas la ligne
   const row = e.target.closest("[data-tx]");
   if (!row) return;
   const kind = row.dataset.kind === "revenu" ? "revenu" : "depense";
@@ -1992,6 +2767,120 @@ $("#tx-list").addEventListener("click", (e) => {
   const source = kind === "revenu" ? state.data.incomes : state.data.expenses;
   const tx = source.find((t) => t.id === row.dataset.tx);
   if (tx) openTxSheet(tx, null, kind);
+});
+
+/* ---- balayage d'une ligne vers la gauche : supprimer (annulable) ----
+   « touch-action: pan-y » laisse le navigateur défiler à la verticale et nous donne
+   les mouvements horizontaux. La suppression est immédiate parce qu'elle s'annule
+   d'un geste : demander confirmation à un balayage, ce serait le rendre pénible. */
+const SWIPE_AT = 96;
+let swipe = null;
+let justSwiped = false;
+
+function deleteMovement(kind, id) {
+  const revenu = kind === "revenu";
+  const list = revenu ? state.data.incomes : state.data.expenses;
+  const removed = list.find((t) => t.id === id);
+  if (!removed) return;
+  if (revenu) state.data.incomes = state.data.incomes.filter((t) => t.id !== id);
+  else state.data.expenses = state.data.expenses.filter((t) => t.id !== id);
+  save();
+  render();
+  offerUndo(revenu ? "Revenu supprimé." : "Dépense supprimée.", () => {
+    (revenu ? state.data.incomes : state.data.expenses).push(removed);
+  });
+}
+
+$("#tx-list").addEventListener("pointerdown", (e) => {
+  const row = e.target.closest(".tx");
+  if (!row || state.selecting || (e.pointerType === "mouse" && e.button !== 0)) return;
+  swipe = { row, x: e.clientX, y: e.clientY, dx: 0, active: false, id: e.pointerId };
+});
+$("#tx-list").addEventListener("pointermove", (e) => {
+  if (!swipe) return;
+  const dx = e.clientX - swipe.x;
+  const dy = e.clientY - swipe.y;
+  if (!swipe.active) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) return void (swipe = null); // c'est un défilement
+    if (!(Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5)) return;
+    swipe.active = true;
+    swipe.row.classList.add("is-swiping");
+    try { swipe.row.setPointerCapture(e.pointerId); } catch { /* pointeur synthétique */ }
+  }
+  swipe.dx = Math.min(0, dx);
+  swipe.row.style.transform = `translateX(${swipe.dx}px)`;
+  swipe.row.classList.toggle("will-delete", swipe.dx < -SWIPE_AT);
+});
+function endSwipe() {
+  if (!swipe) return;
+  const { row, dx, active } = swipe;
+  swipe = null;
+  if (!active) return;
+  justSwiped = true;
+  setTimeout(() => (justSwiped = false), 350);
+  row.classList.remove("is-swiping", "will-delete");
+  if (dx < -SWIPE_AT) {
+    row.style.transform = "translateX(-110%)";
+    setTimeout(() => deleteMovement(row.dataset.kind === "revenu" ? "revenu" : "depense", row.dataset.tx), 160);
+  } else row.style.transform = "";
+}
+$("#tx-list").addEventListener("pointerup", endSwipe);
+$("#tx-list").addEventListener("pointercancel", endSwipe);
+
+/* ---- balayage d'une vue : mois précédent / suivant ---- */
+let pan = null;
+$(".views").addEventListener("pointerdown", (e) => {
+  if (e.pointerType !== "touch" || state.view === "reglages" || state.selecting) return;
+  if (e.target.closest(".tx, input, textarea, select, .cal-grid, .hist")) return;
+  pan = { x: e.clientX, y: e.clientY };
+});
+$(".views").addEventListener("pointerup", (e) => {
+  if (!pan) return;
+  const dx = e.clientX - pan.x;
+  const dy = e.clientY - pan.y;
+  pan = null;
+  if (Math.abs(dx) > 80 && Math.abs(dy) < 50 && Math.abs(dx) > Math.abs(dy) * 2) goToMonth(shiftMonth(state.month, dx < 0 ? 1 : -1));
+});
+$(".views").addEventListener("pointercancel", () => (pan = null));
+
+/* ---- sélecteur de mois ---- */
+let pickYear = Number(todayIso().slice(0, 4));
+function renderMonthPicker() {
+  $("#year-label").textContent = String(pickYear);
+  const grid = $("#month-grid");
+  grid.replaceChildren();
+  const now = todayIso().slice(0, 7);
+  const table = spentTable();
+  for (let m = 1; m <= 12; m++) {
+    const key = `${pickYear}-${pad(m)}`;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.pickMonth = key;
+    b.textContent = monthName(key, "short").replace(".", "");
+    b.setAttribute("aria-label", `${monthName(key)} ${pickYear}`);
+    if (key === state.month) b.classList.add("on");
+    if (key === now) b.classList.add("is-now");
+    if (table[key] || incomesOf(key).length) b.classList.add("has-data");
+    grid.append(b);
+  }
+}
+$("#month-label").addEventListener("click", () => {
+  if (state.view === "reglages") return;
+  pickYear = Number(state.month.slice(0, 4));
+  renderMonthPicker();
+  openSheet("#sheet-month");
+});
+$("#year-prev").addEventListener("click", () => { pickYear--; renderMonthPicker(); });
+$("#year-next").addEventListener("click", () => { pickYear++; renderMonthPicker(); });
+$("#month-grid").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-pick-month]");
+  if (!btn) return;
+  closeSheets();
+  goToMonth(btn.dataset.pickMonth);
+});
+$("#month-today").addEventListener("click", () => {
+  closeSheets();
+  goToMonth(todayIso().slice(0, 7));
 });
 
 $("#clear-filter").addEventListener("click", () => {
@@ -2027,7 +2916,13 @@ for (const [id, key] of [["#amount-min", "amountMin"], ["#amount-max", "amountMa
   });
 }
 
+$("#filter-avoidable").addEventListener("click", () => {
+  state.onlyAvoidable = !state.onlyAvoidable;
+  renderDepenses();
+});
+
 $("#filters-reset").addEventListener("click", () => {
+  state.onlyAvoidable = false;
   state.period = "mois";
   state.dateFrom = state.dateTo = "";
   state.amountMin = state.amountMax = null;
@@ -2046,7 +2941,7 @@ $("#select-toggle").addEventListener("click", () => setSelecting(!state.selectin
 $("#bulk-done").addEventListener("click", () => setSelecting(false));
 
 $("#bulk-all").addEventListener("click", () => {
-  const keys = [...document.querySelectorAll("#tx-list .tx")].map((r) => `${r.dataset.kind}:${r.dataset.tx}`);
+  const keys = state.itemKeys;
   const all = keys.length > 0 && keys.every((k) => state.picked.has(k));
   state.picked.clear();
   if (!all) for (const k of keys) state.picked.add(k);
@@ -2094,6 +2989,9 @@ $("#bulk-edit").addEventListener("click", () => {
       ? "Ce que tu renseignes s'applique à toute la sélection ; le reste ne bouge pas."
       : "Les revenus n'ont pas d'enveloppe : seule la date les concerne.";
   $("#bulk-env-block").hidden = expenses === 0;
+  $("#bulk-ev-block").hidden = expenses === 0;
+  state.draftBulkEv = "";
+  renderBulkEv();
   $("#bulk-date").value = "";
   renderBulkEnvPicker();
   openSheet("#sheet-bulk");
@@ -2126,6 +3024,20 @@ function renderBulkEnvPicker() {
   }
 }
 
+function renderBulkEv() {
+  for (const b of document.querySelectorAll("#bulk-ev [data-ev]")) {
+    const on = b.dataset.ev === state.draftBulkEv;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+}
+$("#bulk-ev").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-ev]");
+  if (!btn) return;
+  state.draftBulkEv = btn.dataset.ev;
+  renderBulkEv();
+});
+
 $("#bulk-env-picker").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-pick]");
   if (!btn) return;
@@ -2138,13 +3050,18 @@ $("#bulk-form").addEventListener("submit", (e) => {
   const taken = pickedItems();
   const date = $("#bulk-date").value;
   const env = state.draftBulkEnv;
-  if (!env && !date) return toast("Choisis une enveloppe ou une date à appliquer.");
+  const ev = state.draftBulkEv;
+  if (!env && !date && !ev) return toast("Choisis une enveloppe, une date ou l'étiquette à appliquer.");
 
   // l'état d'origine de chaque ligne, pour que « Annuler » remette exactement ce qui était là
-  const before = taken.map(({ item }) => ({ item, envelopeId: item.envelopeId, date: item.date }));
+  const before = taken.map(({ item }) => ({ item, envelopeId: item.envelopeId, date: item.date, evitable: item.evitable }));
   let changed = 0;
   for (const { kind, item } of taken) {
     if (env && kind === "depense") item.envelopeId = env;
+    if (ev && kind === "depense") {
+      if (ev === "1") item.evitable = true;
+      else delete item.evitable;
+    }
     if (date) item.date = date;
     changed++;
   }
@@ -2154,6 +3071,8 @@ $("#bulk-form").addEventListener("submit", (e) => {
   offerUndo(`${changed} mouvement${changed > 1 ? "s modifiés" : " modifié"}.`, () => {
     for (const b of before) {
       if ("envelopeId" in b.item || b.envelopeId !== undefined) b.item.envelopeId = b.envelopeId;
+      if (b.evitable) b.item.evitable = true;
+      else delete b.item.evitable;
       b.item.date = b.date;
     }
   });
@@ -2169,10 +3088,20 @@ for (const id of ["#tx-amount", "#recurring-amount"]) {
   $(id).addEventListener("input", () => sizeAmountInput($(id)));
 }
 
+$("#tx-date-quick").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-ago]");
+  if (!btn) return;
+  const d = new Date();
+  d.setDate(d.getDate() - Number(btn.dataset.ago));
+  $("#tx-date").value = isoDay(d);
+});
+
 $("#tx-env-picker").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-pick]");
   if (!btn) return;
   state.draftEnv = btn.dataset.pick;
+  state.draftEnvManual = true;
+  $("#env-suggest-hint").hidden = true;
   for (const b of $("#tx-env-picker").children) {
     const on = b === btn;
     b.classList.toggle("on", on);
@@ -2199,19 +3128,23 @@ $("#tx-form").addEventListener("submit", (e) => {
 
   const revenu = state.draftTxType === "revenu";
   const target = revenu ? state.data.incomes : state.data.expenses;
+  let undoAfterEdit = null;
   const payload = {
     montant: cents,
     libelle: $("#tx-label").value.trim(),
     date: $("#tx-date").value || todayIso(),
   };
-  if (!revenu) payload.envelopeId = state.draftEnv;
+  if (!revenu) {
+    payload.envelopeId = state.draftEnv;
+    if ($("#tx-evitable").checked) payload.evitable = true;
+  }
 
   if (state.editingTx) {
-    Object.assign(
-      target.find((t) => t.id === state.editingTx),
-      payload
-    );
-    toast(revenu ? "Revenu modifié." : "Dépense modifiée.");
+    const record = target.find((t) => t.id === state.editingTx);
+    const restore = snapshotOf(record);
+    if (!payload.evitable) delete record.evitable;
+    Object.assign(record, payload);
+    undoAfterEdit = [revenu ? "Revenu modifié." : "Dépense modifiée.", restore];
   } else {
     target.push({ id: uid(), createdAt: Date.now(), ...payload });
     toast(
@@ -2225,6 +3158,9 @@ $("#tx-form").addEventListener("submit", (e) => {
   save();
   closeSheets();
   render();
+  // la confirmation d'une création est un simple message ; celle d'une modification offre « Annuler »
+  if (undoAfterEdit) offerUndo(...undoAfterEdit);
+  else haptic();
 });
 
 /* Dupliquer rouvre le tiroir en création, même montant, même enveloppe, même
@@ -2238,7 +3174,7 @@ $("#tx-duplicate").addEventListener("click", () => {
   if (!tx) return;
   openTxSheet(
     null,
-    { montantText: toInput(tx.montant), envId: tx.envelopeId, libelle: tx.libelle },
+    { montantText: toInput(tx.montant), envId: tx.envelopeId, libelle: tx.libelle, evitable: tx.evitable },
     revenu ? "revenu" : "depense"
   );
 });
@@ -2266,52 +3202,159 @@ $("#env-form").addEventListener("submit", (e) => {
 
   const budget = parseAmount($("#env-budget").value) ?? 0;
 
+  const report = $("#env-report").checked;
+
   if (state.editingEnv) {
-    Object.assign(envById(state.editingEnv), { nom, budget, couleur: state.draftColor });
-    toast("Enveloppe modifiée.");
-  } else {
-    state.data.envelopes.push({
-      id: uid(),
-      nom,
-      budget,
-      couleur: state.draftColor,
-      ordre: state.data.envelopes.length,
-    });
-    toast("Enveloppe créée.");
+    const env = envById(state.editingEnv);
+    const restore = snapshotOf(env);
+    const before = budgetFor(env, state.month);
+    env.nom = nom;
+    env.couleur = state.draftColor;
+    if (budget !== before) {
+      if ($("#env-budget-past").checked) {
+        env.budgetHistory = [];
+        env.budget = budget;
+      } else setBudgetFrom(env, state.month, budget);
+    }
+    if (report && !env.report) env.reportDepuis = state.month;
+    env.report = report;
+    save();
+    closeSheets();
+    render();
+    return offerUndo("Enveloppe modifiée.", restore);
   }
+  state.data.envelopes.push({
+    id: uid(),
+    nom,
+    budget,
+    budgetHistory: [],
+    report,
+    reportDepuis: report ? state.month : null,
+    archivee: false,
+    couleur: state.draftColor,
+    ordre: state.data.envelopes.length,
+  });
+  toast("Enveloppe créée.");
 
   save();
   closeSheets();
   render();
 });
 
-$("#env-delete").addEventListener("click", (e) => {
-  const count = state.data.expenses.filter((t) => t.envelopeId === state.editingEnv).length;
-  const recurringCount = state.data.recurring.filter((r) => r.envelopeId === state.editingEnv).length;
-  const parts = [];
-  if (count) parts.push(`${count} dépense${count > 1 ? "s" : ""}`);
-  if (recurringCount) parts.push(`${recurringCount} dépense${recurringCount > 1 ? "s" : ""} récurrente${recurringCount > 1 ? "s" : ""}`);
-  const question = parts.length ? `Supprimer aussi ${parts.join(" et ")} ?` : "Confirmer la suppression ?";
-  armDanger(e.currentTarget, question, () => {
-    const id = state.editingEnv;
-    const gone = {
-      env: state.data.envelopes.filter((x) => x.id === id),
-      expenses: state.data.expenses.filter((t) => t.envelopeId === id),
-      recurring: state.data.recurring.filter((r) => r.envelopeId === id),
+/** Retire une enveloppe selon le sort choisi pour ses dépenses ; rend la remise en place. */
+function removeEnvelope(id, fate, to) {
+  const env = envById(id);
+  const mine = (list) => list.filter((x) => x.envelopeId === id);
+  const expenses = mine(state.data.expenses);
+  const rules = mine(state.data.recurring);
+  const was = { archivee: env.archivee, ordre: env.ordre };
+  const activeRules = rules.filter((r) => r.actif);
+  let restore;
+
+  if (fate === "move") {
+    for (const x of [...expenses, ...rules]) x.envelopeId = to;
+    state.data.envelopes = state.data.envelopes.filter((x) => x.id !== id);
+    restore = () => {
+      state.data.envelopes.push(env);
+      for (const x of [...expenses, ...rules]) x.envelopeId = id;
     };
+  } else if (fate === "archive") {
+    env.archivee = true;
+    for (const r of activeRules) r.actif = false;
+    restore = () => {
+      env.archivee = was.archivee;
+      for (const r of activeRules) r.actif = true;
+    };
+  } else {
     state.data.envelopes = state.data.envelopes.filter((x) => x.id !== id);
     state.data.expenses = state.data.expenses.filter((t) => t.envelopeId !== id);
     state.data.recurring = state.data.recurring.filter((r) => r.envelopeId !== id);
-    if (state.filterEnv === id) state.filterEnv = null;
-    save();
-    closeSheets();
-    render();
-    offerUndo("Enveloppe supprimée.", () => {
-      state.data.envelopes.push(...gone.env);
-      state.data.expenses.push(...gone.expenses);
-      state.data.recurring.push(...gone.recurring);
-    });
-  });
+    restore = () => {
+      state.data.envelopes.push(env);
+      state.data.expenses.push(...expenses);
+      state.data.recurring.push(...rules);
+    };
+  }
+  if (state.filterEnv === id) state.filterEnv = null;
+  save();
+  closeSheets();
+  render();
+  const toName = envById(to)?.nom;
+  offerUndo(
+    fate === "move" ? `Dépenses passées dans « ${toName} », enveloppe supprimée.`
+      : fate === "archive" ? `« ${env.nom} » archivée.`
+      : "Enveloppe supprimée.",
+    restore
+  );
+}
+
+$("#env-delete").addEventListener("click", (e) => {
+  const id = state.editingEnv;
+  const count = state.data.expenses.filter((t) => t.envelopeId === id).length;
+  const recurringCount = state.data.recurring.filter((r) => r.envelopeId === id).length;
+  // vide : la suppression directe suffit (et reste annulable)
+  if (!count && !recurringCount) {
+    return armDanger(e.currentTarget, "Confirmer la suppression ?", () => removeEnvelope(id, "delete", null));
+  }
+  const others = envelopes().filter((x) => x.id !== id);
+  state.fate = others.length ? "move" : "archive";
+  state.fateTo = others[0]?.id ?? null;
+  const parts = [];
+  if (count) parts.push(`${count} dépense${count > 1 ? "s" : ""}`);
+  if (recurringCount) parts.push(`${recurringCount} règle${recurringCount > 1 ? "s" : ""} récurrente${recurringCount > 1 ? "s" : ""}`);
+  $("#envdel-title").textContent = `Supprimer « ${envById(id).nom} »`;
+  $("#envdel-note").textContent = `Elle contient ${parts.join(" et ")}. Que doivent-elles devenir ?`;
+  renderEnvDelete();
+  openSheet("#sheet-envdel");
+});
+
+function renderEnvDelete() {
+  const others = envelopes().filter((x) => x.id !== state.editingEnv);
+  for (const b of document.querySelectorAll("#envdel-choices [data-fate]")) {
+    const on = b.dataset.fate === state.fate;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+    if (b.dataset.fate === "move") b.disabled = !others.length;
+  }
+  const picker = $("#envdel-picker");
+  picker.hidden = state.fate !== "move";
+  picker.replaceChildren();
+  for (const env of others) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.role = "radio";
+    b.dataset.to = env.id;
+    b.dataset.i = initialOf(env.nom);
+    b.textContent = env.nom;
+    b.style.setProperty("--c", env.couleur);
+    b.style.setProperty("--on", onColor(env.couleur));
+    b.classList.toggle("on", env.id === state.fateTo);
+    b.setAttribute("aria-checked", String(env.id === state.fateTo));
+    picker.append(b);
+  }
+  const confirm = $("#envdel-confirm");
+  confirm.textContent = state.fate === "move" ? "Réaffecter et supprimer" : state.fate === "archive" ? "Archiver" : "Tout supprimer";
+  confirm.dataset.idle = confirm.textContent;
+  confirm.classList.toggle("btn-danger", state.fate === "delete");
+}
+
+$("#envdel-choices").addEventListener("click", (e) => {
+  const fate = e.target.closest("[data-fate]");
+  const to = e.target.closest("[data-to]");
+  if (fate && !fate.disabled) state.fate = fate.dataset.fate;
+  if (to) state.fateTo = to.dataset.to;
+  if (fate || to) {
+    disarmAll(); // le bouton change de texte avec le choix : une confirmation en attente serait périmée
+    renderEnvDelete();
+  }
+});
+
+$("#envdel-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  // « tout supprimer » reste en deux temps ; réaffecter et archiver sont réversibles d'un geste
+  if (state.fate === "delete")
+    return armDanger($("#envdel-confirm"), "Confirmer : tout supprimer ?", () => removeEnvelope(state.editingEnv, "delete", null));
+  removeEnvelope(state.editingEnv, state.fate, state.fateTo);
 });
 
 $("#recurring-add").addEventListener("click", () => openRecurringSheet(null, "depense"));
@@ -2389,7 +3432,7 @@ $("#recurring-form").addEventListener("submit", (e) => {
   $("#recurring-label-error").hidden = Boolean(libelle);
 
   const jour = Number.parseInt($("#recurring-day").value, 10);
-  const jourValid = Number.isInteger(jour) && jour >= 1 && jour <= 28;
+  const jourValid = Number.isInteger(jour) && jour >= 1 && jour <= 31;
   $("#recurring-day-error").hidden = jourValid;
 
   const type = state.draftRecurringType;
@@ -2408,6 +3451,7 @@ $("#recurring-form").addEventListener("submit", (e) => {
     actif: state.draftRecurringActive,
     icone: state.draftRecurringIcon,
     envelopeId: type === "depense" ? state.draftRecurringEnv : null,
+    evitable: type === "depense" && $("#recurring-evitable").checked,
   };
 
   /* Point de départ du rattrapage. Une règle qui sort de pause repart
@@ -2416,8 +3460,13 @@ $("#recurring-form").addEventListener("submit", (e) => {
   const thisMonth = todayIso().slice(0, 7);
   payload.debut = previous && previous.actif && payload.actif ? previous.debut : thisMonth;
 
-  if (editing) Object.assign(previous, payload);
-  else state.data.recurring.push({ id: uid(), createdAt: Date.now(), ...payload });
+  let restoreRule = null;
+  let restoreStamp = null;
+  if (editing) {
+    restoreRule = snapshotOf(previous);
+    Object.assign(previous, payload);
+    restoreStamp = syncStamped(previous);
+  } else state.data.recurring.push({ id: uid(), createdAt: Date.now(), ...payload });
 
   save();
   closeSheets();
@@ -2426,7 +3475,14 @@ $("#recurring-form").addEventListener("submit", (e) => {
   render();
 
   const label = type === "revenu" ? "Revenu récurrent" : "Dépense récurrente";
-  if (editing) toast(created ? "Modifié — le mois en cours est à jour." : `${label} modifié${type === "revenu" ? "" : "e"}.`);
+  if (editing)
+    offerUndo(
+      created ? "Modifié — le mois en cours est à jour." : `${label} modifié${type === "revenu" ? "" : "e"}.`,
+      () => {
+        restoreRule();
+        restoreStamp();
+      }
+    );
   else
     toast(
       created
@@ -2528,6 +3584,123 @@ function consumeShortcutLink() {
   });
 }
 
+/* ---------------------------------------------------------- premier lancement */
+
+const needsOnboarding = () =>
+  !state.data.settings.onboarded && !state.data.expenses.length && !state.data.incomes.length;
+
+function obTotals() {
+  const income = parseAmount($("#ob-income").value) ?? 0;
+  let sum = 0;
+  for (const row of document.querySelectorAll(".ob-row")) {
+    if (row.querySelector("input[type=checkbox]").checked) sum += parseAmount(row.querySelector("input[type=text]").value) ?? 0;
+  }
+  const left = $("#ob-left");
+  left.classList.toggle("is-over", income > 0 && sum > income);
+  left.textContent = income
+    ? sum > income
+      ? `Tes budgets dépassent ton revenu de ${money(sum - income)}.`
+      : `Reste à répartir : ${money(income - sum)}`
+    : sum
+      ? `Total des budgets : ${money(sum)}`
+      : "";
+}
+
+function openOnboarding() {
+  const box = $("#ob-envs");
+  box.replaceChildren();
+  DEFAULT_ENVELOPES.forEach((env, i) => {
+    const row = document.createElement("div");
+    row.className = "ob-row";
+    const label = document.createElement("label");
+    label.className = "check";
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = i < 5;
+    const name = document.createElement("span");
+    name.textContent = env.nom;
+    label.append(check, badge("env-dot", env.couleur, initialOf(env.nom)), name);
+    const amount = document.createElement("input");
+    amount.type = "text";
+    amount.inputMode = "decimal";
+    amount.autocomplete = "off";
+    amount.placeholder = String(env.suggestion);
+    amount.setAttribute("aria-label", `Budget mensuel ${env.nom}`);
+    amount.disabled = !check.checked;
+    check.addEventListener("change", () => {
+      amount.disabled = !check.checked;
+      obTotals();
+    });
+    row.append(label, amount);
+    box.append(row);
+  });
+  $("#ob-income").value = "";
+  $("#ob-day").value = "1";
+  obTotals();
+  $("#onboard").hidden = false;
+  $(".app").inert = true;
+  $("#onboard-title").tabIndex = -1;
+  $("#onboard-title").focus({ preventScroll: true });
+}
+
+function closeOnboarding() {
+  $("#onboard").hidden = true;
+  $(".app").inert = false;
+}
+
+/** Ouvre l'accueil guidé quand il faut, le referme quand il ne faut plus (annulation d'un « Tout effacer »). */
+function syncOnboarding() {
+  const needed = needsOnboarding();
+  if (needed && $("#onboard").hidden) openOnboarding();
+  else if (!needed && !$("#onboard").hidden) closeOnboarding();
+}
+
+$("#ob-envs").addEventListener("input", obTotals);
+$("#ob-income").addEventListener("input", obTotals);
+
+$("#ob-skip").addEventListener("click", () => {
+  state.data.settings.onboarded = true;
+  save();
+  closeOnboarding();
+  render();
+});
+
+$("#ob-go").addEventListener("click", () => {
+  const rows = [...document.querySelectorAll(".ob-row")];
+  const chosen = rows
+    .map((row, i) => ({ row, env: DEFAULT_ENVELOPES[i] }))
+    .filter(({ row }) => row.querySelector("input[type=checkbox]").checked);
+  if (!chosen.length) return toast("Garde au moins une enveloppe — tu pourras en créer d'autres ensuite.");
+
+  state.data.envelopes = chosen.map(({ row, env }, i) => ({
+    id: uid(),
+    ordre: i,
+    nom: env.nom,
+    couleur: env.couleur,
+    budget: parseAmount(row.querySelector("input[type=text]").value) ?? 0,
+    budgetHistory: [],
+    report: false,
+    reportDepuis: null,
+    archivee: false,
+  }));
+
+  const income = parseAmount($("#ob-income").value);
+  const day = Math.min(31, Math.max(1, Number.parseInt($("#ob-day").value, 10) || 1));
+  if (income) {
+    state.data.recurring.push({
+      id: uid(), type: "revenu", montant: income, libelle: "Salaire", jour: day, actif: true,
+      icone: "salaire", envelopeId: null, evitable: false,
+      debut: todayIso().slice(0, 7), createdAt: Date.now(),
+    });
+  }
+  state.data.settings.onboarded = true;
+  save();
+  closeOnboarding();
+  generateRecurring();
+  render();
+  toast(income ? "C'est parti : ton revenu revient chaque mois." : "C'est parti.");
+});
+
 /* ---------------------------------------------------------- démarrage */
 
 /* Installée sur l'écran d'accueil, l'appli occupe tout l'écran ; ouverte
@@ -2538,18 +3711,36 @@ function isStandalone() {
 }
 document.documentElement.dataset.standalone = isStandalone() ? "1" : "0";
 
+/* Taille du texte réglée dans iOS (Réglages › Affichage › Taille du texte). Safari ne la
+   transmet qu'à la police système `-apple-system-body` : on la mesure sur un témoin caché et
+   on en tire un facteur (17 px = 1) qui agrandit toutes les tailles en rem. Ailleurs (Chrome,
+   Tauri) la déclaration est refusée, le facteur reste à 1. */
+function applyTextScale() {
+  try {
+    const probe = document.createElement("p");
+    probe.style.cssText = "position:absolute;visibility:hidden;font:-apple-system-body";
+    if (!probe.style.font) return;
+    document.body.append(probe);
+    const px = Number.parseFloat(getComputedStyle(probe).fontSize);
+    probe.remove();
+    if (Number.isFinite(px)) document.documentElement.style.setProperty("--text-scale", String(Math.min(1.6, Math.max(1, px / 17))));
+  } catch {
+    /* garde l'échelle par défaut */
+  }
+}
+applyTextScale();
+
 /* Une sauvegarde abimee est reparee a la lecture, en memoire — mais tant qu'aucune
    modification ne declenche d'ecriture, le fichier fautif reste sur le disque et
    se fait rereparer a chaque ouverture. On le reecrit une bonne fois, pour que
    l'export lui aussi parte propre. */
-if (lastRepairCount || lastAddedEvitable) save();
+if (lastRepairCount) save();
 
 render();
 const startup = generateRecurring();
 if (startup.created) render();
 const caughtUp = backfillMessage(startup);
 if (caughtUp) toast(caughtUp);
-else if (lastAddedEvitable) toast("Nouvelle enveloppe « Évitable » (50 € / mois) — modifiable via Gérer.");
 consumeShortcutLink();
 // les boutons d'onglet ne sont mesurables qu'une fois la mise en page faite
 requestAnimationFrame(positionTabPill);
@@ -2565,6 +3756,7 @@ document.documentElement.dataset.appReady = "1";
 let lastSeenDay = todayIso();
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
+  applyTextScale(); // le réglage a pu changer pendant que l'appli était en arrière-plan
   const today = todayIso();
   if (today === lastSeenDay) return;
   const wasOnCurrentMonth = state.month === lastSeenDay.slice(0, 7);

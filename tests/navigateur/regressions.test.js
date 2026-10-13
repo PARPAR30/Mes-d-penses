@@ -103,7 +103,7 @@ async function boot(page, dataExpr) {
     q("#fab").click(); await wait(340);
     const i = q("#tx-amount");
     const res = {};
-    for (const v of ["12,50", "12345678,90"]) {
+    for (const v of ["12,50", "123456789012,90"]) {
       i.value = v; i.dispatchEvent(new Event("input")); await wait(80);
       const cs = getComputedStyle(i);
       const c = document.createElement("canvas").getContext("2d");
@@ -113,8 +113,8 @@ async function boot(page, dataExpr) {
     q("#scrim").click(); await wait(320);
     return res;`);
   check("montant court : pas rogne", big["12,50"].rogne === false, big["12,50"]);
-  check("montant long : pas rogne non plus", big["12345678,90"].rogne === false, big["12345678,90"]);
-  check("montant long : la fonte a retreci", big["12345678,90"].taille < big["12,50"].taille, big);
+  check("montant long : pas rogne non plus", big["123456789012,90"].rogne === false, big["123456789012,90"]);
+  check("montant long : la fonte a retreci", big["123456789012,90"].taille < big["12,50"].taille, big);
 
   // ------------------------------------------------ bouton + sans enveloppe
   console.log("\nBouton + sans aucune enveloppe");
@@ -219,7 +219,7 @@ async function boot(page, dataExpr) {
   check("la depense SANS DATE est ecartee", !repaired.depenses.some((x) => x[0] === "SANS DATE"), repaired.depenses);
   check("la depense orpheline est gardee, sans enveloppe", repaired.depenses.some((x) => x[0] === "enveloppe fantome" && x[2] === null), repaired.depenses);
   check("incomes:null redevient un tableau", repaired.incomes === true, repaired.incomes);
-  check("un jour 99 est ramene dans 1..28", repaired.jour === 28, repaired.jour);
+  check("un jour 99 est ramene dans 1..31", repaired.jour === 31, repaired.jour);
   check("un theme inconnu retombe sur auto", repaired.theme === "auto", repaired.theme);
   check("un graphique inconnu retombe sur barre", repaired.chart === "barre", repaired.chart);
 
@@ -555,29 +555,32 @@ async function boot(page, dataExpr) {
   check("l'adresse est nettoyee", shortcut.urlNettoyee === true, shortcut);
   check("rien n'est enregistre sans validation", shortcut.enregistre === 0, shortcut);
 
-  // ------------------------------------------------ catégorie « Évitable »
-  console.log("\nCatégorie Évitable");
-  // sauvegarde antérieure à 1.9 : pas de drapeau « evitable »
+  // ------------------------------------------------ « Évitable » : une étiquette
+  console.log("\nÉtiquette Évitable");
+  // une ancienne sauvegarde ne reçoit plus d'enveloppe « Évitable » d'office
   await boot(page, `baseData({ settings: { theme: "auto", chart: "barre" } })`);
-  const ajoutee = await evalOn(page, `await wait(300); const d = stored();
-    return { noms: d.envelopes.map((e) => e.nom), budget: (d.envelopes.find((e) => e.nom === "Évitable") || {}).budget,
-             drapeau: d.settings.evitable, message: q("#toast").textContent };`);
-  check("une ancienne sauvegarde recoit « Évitable »", ajoutee.noms.includes("Évitable") && ajoutee.budget === 5000, ajoutee);
-  check("une seule fois, drapeau pose", ajoutee.noms.filter((n) => n === "Évitable").length === 1 && ajoutee.drapeau === true, ajoutee);
-  check("et le dit", /vitable/.test(ajoutee.message), ajoutee.message);
-  // supprimée par l'utilisateur, elle ne revient pas
-  await evalOn(page, `const d = stored(); d.envelopes = d.envelopes.filter((e) => e.nom !== "Évitable");
-    localStorage.setItem("mon-budget/v1", JSON.stringify(d)); return 1;`);
-  await navigateAndWait(page, URL_APP, READY);
-  const revenue = await evalOn(page, `return stored().envelopes.some((e) => e.nom === "Évitable");`);
-  check("supprimée, elle ne revient pas", revenue === false, revenue);
-  // le bilan chiffre la part évitable
-  await boot(page, `baseData({ envelopes: baseData().envelopes.concat([{ id: "e9", ordre: 3, nom: "Évitable", couleur: "#d6497e", budget: 5000 }]),
-    expenses: [{ id: "a1", montant: 7500, libelle: "Pain", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 },
-               { id: "a2", montant: 2500, libelle: "Impulsion", date: mkey(0) + "-03", envelopeId: "e9", createdAt: 2 }] })`);
-  const bilan = await evalOn(page, `go("bilan"); await wait(260);
-    return { visible: vis(q("#bilan-evitable")), texte: q("#bilan-evitable").textContent };`);
-  check("le bilan chiffre l'évitable", bilan.visible && /25,00/.test(bilan.texte) && /25 %/.test(bilan.texte), bilan);
+  const sansAjout = await evalOn(page, `await wait(200); return stored().envelopes.map((e) => e.nom);`);
+  check("plus d'enveloppe « Évitable » ajoutée d'office", sansAjout.length === 3 && !sansAjout.includes("Évitable"), sansAjout);
+
+  // l'étiquette se pose dans le tiroir, se retrouve en liste, au bilan et au filtre
+  await boot(page, `baseData({ expenses: [
+      { id: "a1", montant: 7500, libelle: "Pain", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 },
+      { id: "a2", montant: 2500, libelle: "Sushi", date: mkey(0) + "-03", envelopeId: "e2", createdAt: 2, evitable: true } ] })`);
+  const etiquette = await evalOn(page, `go("bilan"); await wait(240);
+    const bilan = q("#bilan-evitable").hidden ? null : q("#bilan-evitable").textContent;
+    go("depenses"); await wait(220);
+    const marque = qa("#tx-list .tx").map((r) => r.textContent).filter((t) => /évitable/.test(t)).length;
+    q("#filters-toggle").click(); await wait(100); q("#filter-avoidable").click(); await wait(150);
+    const filtre = qa("#tx-list .tx").length;
+    q("#filters-reset").click(); await wait(100);
+    qa("#tx-list .tx")[0].click(); await wait(340);
+    const coche = q("#tx-evitable").checked;
+    q("#tx-evitable").click(); q("#tx-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    return { bilan, marque, filtre, coche, retire: stored().expenses.some((t) => t.evitable) };`);
+  check("le bilan chiffre la part évitable (25 %)", /25,00/.test(etiquette.bilan || "") && /25 %/.test(etiquette.bilan || ""), etiquette);
+  check("la liste marque la dépense évitable", etiquette.marque === 1, etiquette);
+  check("« Évitables seulement » filtre", etiquette.filtre === 1, etiquette);
+  check("l'étiquette se décoche dans le tiroir", etiquette.coche === true && etiquette.retire === false, etiquette);
 
   // ------------------------------------------------ v1.10 : sélection, filtres, annulation
   console.log("\nSélection, filtres, annulation");
@@ -695,6 +698,312 @@ async function boot(page, dataExpr) {
   const mois = await evalOn(page, `go("bilan"); await wait(240);
     return qa("#hist .hist-v").map((e) => e.textContent);`);
   check("chaque mois affiche son total (ou un tiret)", mois.length === 6 && mois[5] !== "–" && mois[0] === "–", mois);
+
+  // ------------------------------------------------ v2 : budgets par mois, report, jour 31
+  console.log("\nBudgets par mois, report, jour d'échéance");
+  await boot(page, `baseData({ expenses: [
+      { id: "m1", montant: 30000, libelle: "Courses passées", date: mkey(-1) + "-10", envelopeId: "e2", createdAt: 1 } ] })`);
+  const budgets = await evalOn(page, `go("accueil"); await wait(200);
+    q("#toggle-manage").click(); await wait(150);
+    q('.env[data-env="e2"]').click(); await wait(340);
+    q("#env-budget").value = "500"; q("#env-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    const e2 = stored().envelopes.find((e) => e.id === "e2");
+    const apres = { passe: budgetFor(e2, mkey(-1)), courant: budgetFor(e2, mkey(0)), futur: budgetFor(e2, mkey(2)), base: e2.budget };
+    q('.env[data-env="e2"]').click(); await wait(340);
+    q("#env-budget").value = "600"; q("#env-budget-past").click();
+    q("#env-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    const e2b = stored().envelopes.find((e) => e.id === "e2");
+    return { apres, partout: [budgetFor(e2b, mkey(-1)), budgetFor(e2b, mkey(0))] };`);
+  check("changer un budget ne touche pas les mois passés", budgets.apres.passe === 40000 && budgets.apres.courant === 50000, budgets);
+  check("il vaut pour les mois suivants", budgets.apres.futur === 50000 && budgets.apres.base === 50000, budgets);
+  check("« aussi les mois passés » réécrit tout", budgets.partout[0] === 60000 && budgets.partout[1] === 60000, budgets);
+
+  const report = await evalOn(page, `
+    const env = { id: "r", ordre: 9, nom: "Report", couleur: "#3f6de0", budget: 10000, budgetHistory: [], report: true, reportDepuis: mkey(-2) };
+    state.data.envelopes.push(env);
+    state.data.expenses.push({ id: "r1", montant: 4000, date: mkey(-2) + "-05", envelopeId: "r", createdAt: 1, libelle: "a" },
+                             { id: "r2", montant: 12000, date: mkey(-1) + "-05", envelopeId: "r", createdAt: 2, libelle: "b" });
+    save();
+    return { m1: carryIn(env, mkey(-1)), m0: carryIn(env, mkey(0)), dispo: budgetOf(env, mkey(0)), depart: carryIn(env, mkey(-2)) };`);
+  check("le reste d'un mois s'ajoute au suivant", report.m1 === 6000, report);
+  check("un dépassement ne devient pas une dette", report.m0 === 4000 && report.dispo === 14000, report);
+  check("rien n'est reporté avant l'activation", report.depart === 0, report);
+
+  const jours = await evalOn(page, `return [effDay({ jour: 31 }, "2026-02"), effDay({ jour: 31 }, "2026-04"), effDay({ jour: 15 }, "2026-04"), effDay({ jour: 30 }, "2028-02")];`);
+  check("le 31 devient le dernier jour du mois court", jours.join(",") === "28,30,15,29", jours);
+
+  // ------------------------------------------------ v2 : supprimer une enveloppe
+  console.log("\nSupprimer une enveloppe");
+  const enveloppeAvec = `baseData({ expenses: [
+      { id: "d1", montant: 1000, libelle: "A", date: mkey(0) + "-02", envelopeId: "e3", createdAt: 1 },
+      { id: "d2", montant: 2000, libelle: "B", date: mkey(0) + "-03", envelopeId: "e3", createdAt: 2 } ],
+    recurring: [{ id: "rr", type: "depense", montant: 500, libelle: "Pass", jour: 5, actif: true, icone: null, envelopeId: "e3", debut: mkey(0), createdAt: 1 }] })`;
+  await boot(page, enveloppeAvec);
+  const reaffecte = await evalOn(page, `go("accueil"); await wait(200);
+    q("#toggle-manage").click(); await wait(150);
+    q('.env[data-env="e3"]').click(); await wait(340);
+    const avant = stored().expenses.filter((t) => t.envelopeId === "e3").length;
+    q("#env-delete").click(); await wait(400);
+    const ouvert = q("#sheet-envdel").classList.contains("show");
+    const choix = qa("#envdel-choices [data-fate]").map((b) => b.dataset.fate + ":" + b.classList.contains("on"));
+    q('#envdel-picker [data-to="e2"]').click(); await wait(60);
+    q("#envdel-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    const d = stored();
+    const res = { avant, ouvert, choix, restantes: d.envelopes.length, versE2: d.expenses.filter((t) => t.envelopeId === "e2").length,
+                  regle: d.recurring[0].envelopeId, offre: Boolean(q(".toast-action")) };
+    q(".toast-action").click(); await wait(250);
+    res.apres = { env: stored().envelopes.length, e3: stored().expenses.filter((t) => t.envelopeId === "e3").length, regle: stored().recurring[0].envelopeId };
+    return res;`);
+  check("une enveloppe pleine propose le sort de ses dépenses", reaffecte.ouvert && reaffecte.choix[0] === "move:true", reaffecte);
+  check("réaffecter déplace dépenses et règles", reaffecte.restantes === 2 && reaffecte.versE2 === reaffecte.avant && reaffecte.regle === "e2", reaffecte);
+  check("…et Annuler remet tout en place", reaffecte.apres.env === 3 && reaffecte.apres.e3 === reaffecte.avant && reaffecte.apres.regle === "e3", reaffecte);
+
+  await boot(page, enveloppeAvec);
+  const archive = await evalOn(page, `go("accueil"); await wait(200);
+    q("#toggle-manage").click(); await wait(150);
+    q('.env[data-env="e3"]').click(); await wait(340);
+    q("#env-delete").click(); await wait(400);
+    q('#envdel-choices [data-fate="archive"]').click(); await wait(60);
+    q("#envdel-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    const d = stored(); const e3 = d.envelopes.find((e) => e.id === "e3");
+    const res = { archivee: e3 && e3.archivee, depenses: d.expenses.length, regleActive: d.recurring[0].actif,
+                  saisie: !q('.env[data-env="e3"]') };
+    res.restaurable = Boolean(q('[data-restore="e3"]'));
+    q('[data-restore="e3"]').click(); await wait(200);
+    res.revenue = !stored().envelopes.find((e) => e.id === "e3").archivee;
+    return res;`);
+  check("archiver garde l'historique et ferme la saisie", archive.archivee === true && archive.depenses >= 2, archive);
+  check("ses règles récurrentes sont mises en pause", archive.regleActive === false, archive);
+  check("une archivée se restaure", archive.restaurable && archive.revenue, archive);
+
+  // ------------------------------------------------ v2 : suggestion d'enveloppe
+  console.log("\nSuggestion d'enveloppe");
+  await boot(page, `baseData({ expenses: [
+      { id: "s1", montant: 1200, libelle: "Monoprix", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 },
+      { id: "s2", montant: 800, libelle: "Monoprix", date: mkey(0) + "-03", envelopeId: "e2", createdAt: 2 },
+      { id: "s3", montant: 3000, libelle: "Monoprix", date: mkey(0) + "-04", envelopeId: "e1", createdAt: 3 },
+      { id: "s4", montant: 900, libelle: "Sushi", date: mkey(0) + "-05", envelopeId: "e1", createdAt: 4, evitable: true } ] })`);
+  const suggest = await evalOn(page, `q("#fab").click(); await wait(400);
+    const label = q("#tx-label");
+    label.value = "Mono"; label.dispatchEvent(new Event("input", { bubbles: true })); await wait(80);
+    const choisie = q("#tx-env-picker button.on").textContent;
+    const hint = q("#env-suggest-hint").hidden ? null : q("#env-suggest-hint").textContent;
+    const puces = qa("#label-suggest button").map((b) => b.textContent);
+    // un choix manuel stoppe la suggestion
+    q('#tx-env-picker [data-pick="e3"]').click(); await wait(40);
+    label.value = "Monoprix"; label.dispatchEvent(new Event("input", { bubbles: true })); await wait(80);
+    const apresManuel = q("#tx-env-picker button.on").textContent;
+    // une étiquette « évitable » majoritaire se coche
+    q("#sheet-tx .sheet-close").click(); await wait(400);
+    q("#fab").click(); await wait(400);
+    q("#tx-label").value = "Sushi"; q("#tx-label").dispatchEvent(new Event("input", { bubbles: true })); await wait(80);
+    return { choisie, hint, puces, apresManuel, evitable: q("#tx-evitable").checked, envSushi: q("#tx-env-picker button.on").textContent };`);
+  check("le libellé connu présélectionne son enveloppe usuelle", suggest.choisie === "Courses", suggest);
+  check("la suggestion est expliquée", /Courses/.test(suggest.hint || "") && /3 fois/.test(suggest.hint || ""), suggest);
+  check("le libellé complet est proposé en un geste", suggest.puces.includes("Monoprix"), suggest);
+  check("un choix manuel n'est plus écrasé", suggest.apresManuel === "Transports", suggest);
+  check("l'étiquette évitable suit l'habitude", suggest.evitable === true && suggest.envSushi === "Logement", suggest);
+
+  // ------------------------------------------------ v2 : premier lancement
+  console.log("\nPremier lancement");
+  await evalOn(page, `localStorage.clear(); return 1;`);
+  await navigateAndWait(page, URL_APP, READY);
+  const accueilGuide = await evalOn(page, `await wait(300);
+    const visible = vis(q("#onboard"));
+    const lignes = qa("#ob-envs .ob-row").length;
+    const inert = q(".app").inert;
+    q("#ob-income").value = "2000"; q("#ob-income").dispatchEvent(new Event("input", { bubbles: true }));
+    const rows = qa("#ob-envs .ob-row");
+    rows[0].querySelector("input[type=text]").value = "800"; rows[0].querySelector("input[type=text]").dispatchEvent(new Event("input", { bubbles: true }));
+    rows[1].querySelector("input[type=text]").value = "300"; rows[1].querySelector("input[type=text]").dispatchEvent(new Event("input", { bubbles: true }));
+    const reste = q("#ob-left").textContent;
+    rows[4].querySelector("input[type=checkbox]").click();
+    q("#ob-go").click(); await wait(400);
+    const d = stored();
+    return { visible, lignes, inert, reste, ferme: q("#onboard").hidden, inertApres: q(".app").inert, noms: d.envelopes.map((e) => e.nom),
+             budgets: d.envelopes.map((e) => e.budget), regle: d.recurring.map((r) => [r.type, r.montant, r.jour]), onboarded: d.settings.onboarded };`);
+  check("un premier lancement montre l'accueil guidé", accueilGuide.visible && accueilGuide.lignes === 7 && accueilGuide.inert, accueilGuide);
+  check("il dit ce qui reste à répartir", /900/.test(accueilGuide.reste), accueilGuide);
+  check("il crée les enveloppes cochées avec leurs budgets", accueilGuide.noms.length === 4 && accueilGuide.budgets[0] === 80000 && accueilGuide.budgets[1] === 30000, accueilGuide);
+  check("et le revenu récurrent", accueilGuide.regle.length === 1 && accueilGuide.regle[0][0] === "revenu" && accueilGuide.regle[0][1] === 200000, accueilGuide);
+  check("puis se referme pour de bon", accueilGuide.ferme && !accueilGuide.inertApres && accueilGuide.onboarded === true, accueilGuide);
+  await navigateAndWait(page, URL_APP, READY);
+  const pasDeuxFois = await evalOn(page, `await wait(200); return q("#onboard").hidden;`);
+  check("il ne revient pas à la réouverture", pasDeuxFois === true, pasDeuxFois);
+
+  // ------------------------------------------------ v2 : reste / solde, modification annulable, mois en cours
+  console.log("\nReste, solde, modifications");
+  await boot(page, `baseData({ envelopes: [
+      { id: "e1", ordre: 0, nom: "Logement", couleur: "#3f6de0", budget: 150000 },
+      { id: "e2", ordre: 1, nom: "Courses", couleur: "#e4634a", budget: 100000 } ],
+    incomes: [{ id: "i1", montant: 200000, libelle: "Salaire", date: mkey(0) + "-01", createdAt: 1 }],
+    expenses: [{ id: "x1", montant: 5000, libelle: "Pain", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 }] })`);
+  const resteSolde = await evalOn(page, `go("accueil"); await wait(240);
+    return { alerte: q("#total-warn").hidden ? null : q("#total-warn").textContent, solde: q("#flow-net-k").textContent };`);
+  check("des budgets supérieurs aux revenus sont signalés", /dépassent tes revenus/.test(resteSolde.alerte || "") && /500,00/.test(resteSolde.alerte || ""), resteSolde);
+  check("le solde positif s'appelle « Épargné »", resteSolde.solde === "Épargné", resteSolde);
+
+  const modif = await evalOn(page, `go("depenses"); await wait(220);
+    qa("#tx-list .tx")[0].click(); await wait(340);
+    q("#tx-amount").value = "99"; q("#tx-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    const apres = stored().expenses[0].montant;
+    const offre = q(".toast-action") ? q(".toast-action").textContent : null;
+    q(".toast-action").click(); await wait(250);
+    return { apres, offre, retour: stored().expenses[0].montant };`);
+  check("une modification propose Annuler", modif.apres === 9900 && modif.offre === "Annuler", modif);
+  check("Annuler remet l'ancien montant", modif.retour === 5000, modif);
+
+  await boot(page, `baseData({ recurring: [{ id: "rl", type: "depense", montant: 50000, libelle: "Loyer", jour: 1, actif: true, icone: null, envelopeId: "e1", debut: mkey(0), createdAt: 1 }] })`);
+  const regleMaj = await evalOn(page, `await wait(300);
+    const avant = stored().expenses.filter((t) => t.recurringId === "rl").map((t) => t.montant);
+    go("recurrent"); await wait(220);
+    q('#recurring-list [data-recurring="rl"]').click(); await wait(340);
+    q("#recurring-amount").value = "520"; q("#recurring-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    return { avant, apres: stored().expenses.filter((t) => t.recurringId === "rl").map((t) => t.montant), total: stored().expenses.length };`);
+  check("corriger une règle met à jour le mois en cours", regleMaj.avant.join() === "50000" && regleMaj.apres.join() === "52000" && regleMaj.total === 1, regleMaj);
+
+  // ------------------------------------------------ v2 : à venir, objectifs
+  console.log("\nÀ venir et objectifs d'épargne");
+  await boot(page, `baseData({ recurring: [
+      { id: "u1", type: "depense", montant: 1500, libelle: "Salle", jour: 1, actif: true, icone: null, envelopeId: "e1", debut: mkey(0), createdAt: 1 },
+      { id: "u2", type: "revenu", montant: 200000, libelle: "Salaire", jour: 1, actif: true, icone: "salaire", envelopeId: null, debut: mkey(0), createdAt: 2 },
+      { id: "u3", type: "depense", montant: 3000, libelle: "Demain", jour: ((new Date().getDate()) % 28) + 1, actif: true, icone: null, envelopeId: "e1", debut: mkey(0), createdAt: 3 } ] })`);
+  const avenir = await evalOn(page, `await wait(300); go("recurrent"); await wait(240);
+    return { lignes: qa("#upcoming-list .up-row").map((r) => r.textContent), fixe: qa("#fixed-sum .flow-v").map((e) => e.textContent) };`);
+  check("« à venir » liste ce qui tombe d'ici 7 jours", avenir.lignes.some((l) => /Demain|Dans|Aujourd/.test(l) && /Demain/.test(l)), avenir);
+  check("une échéance déjà tombée n'y figure plus", !avenir.lignes.some((l) => /Salle|Salaire/.test(l)) || new Date().getDate() === 1, avenir);
+  check("charges fixes, revenus fixes, reste libre", avenir.fixe.length === 3 && /45,00/.test(avenir.fixe[0]) && /2\s?000,00/.test(avenir.fixe[1]), avenir);
+
+  await boot(page, `baseData()`);
+  const objectif = await evalOn(page, `go("accueil"); await wait(220);
+    const vide = Boolean(q("#goal-list .empty"));
+    q("#goal-add").click(); await wait(360);
+    q("#goal-name").value = "Vacances"; q("#goal-target").value = "1000"; q("#goal-saved").value = "250";
+    const d = new Date(); d.setMonth(d.getMonth() + 4);
+    q("#goal-date").value = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    q("#goal-target").dispatchEvent(new Event("input", { bubbles: true }));
+    const rythme = q("#goal-pace").hidden ? null : q("#goal-pace").textContent;
+    q("#goal-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    const g = stored().goals[0];
+    q('#goal-list [data-goal]').click(); await wait(360);
+    q("#goal-deposit").value = "100"; q("#goal-deposit-btn").click(); await wait(340);
+    const apresVersement = stored().goals[0].epargne;
+    q(".toast-action").click(); await wait(250);
+    const annule = stored().goals[0].epargne;
+    return { vide, rythme, nom: g && g.nom, cible: g && g.cible, epargne: g && g.epargne, apresVersement, annule,
+             ligne: q("#goal-list .goal").textContent };`);
+  check("sans objectif, un écran vide propose d'en créer un", objectif.vide === true, objectif);
+  check("un objectif se crée avec montant et avance", objectif.nom === "Vacances" && objectif.cible === 100000 && objectif.epargne === 25000, objectif);
+  check("il calcule la somme à mettre de côté par mois", /150,00/.test(objectif.rythme || ""), objectif);
+  check("un versement s'ajoute, et s'annule", objectif.apresVersement === 35000 && objectif.annule === 25000, objectif);
+
+  // ------------------------------------------------ v2 : bilan sur 12 mois / année, par enveloppe
+  console.log("\nBilan détaillé");
+  await boot(page, `baseData({ expenses: [
+      { id: "t1", montant: 10000, libelle: "a", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 },
+      { id: "t2", montant: 20000, libelle: "b", date: mkey(-1) + "-02", envelopeId: "e2", createdAt: 2 },
+      { id: "t3", montant: 5000, libelle: "c", date: mkey(-1) + "-03", envelopeId: "e3", createdAt: 3 } ] })`);
+  const detail = await evalOn(page, `go("bilan"); await wait(240);
+    const six = qa("#hist button").length;
+    q('[data-hist="12"]').click(); await wait(200);
+    const douze = { barres: qa("#hist button").length, note: q("#hist-note").hidden ? null : q("#hist-note").textContent, titre: q("#hist-title").textContent };
+    q('[data-hist="annee"]').click(); await wait(200);
+    const annee = { barres: qa("#hist button").length, titre: q("#hist-title").textContent };
+    q('[data-hist="6"]').click(); await wait(200);
+    const lignes = qa("#env-trend .trend").map((r) => r.querySelector(".trend-t b").textContent + "|" + r.querySelector(".trend-a").textContent);
+    qa("#env-trend .trend")[0].click(); await wait(250);
+    return { six, douze, annee, lignes, vue: qa(".view:not([hidden])")[0].id, filtre: q("#filter-label").textContent, nb: qa("#tx-list .tx").length, memoire: stored().settings.histMode };`);
+  check("12 mois = 12 barres, avec le montant du mois choisi au-dessus", detail.douze.barres === 12 && /€/.test(detail.douze.note || "") && /12 derniers/.test(detail.douze.titre), detail);
+  check("« Année » = janvier à décembre", detail.annee.barres === 12 && /Année/.test(detail.annee.titre), detail);
+  check("par enveloppe : classées par total", detail.lignes[0].startsWith("Courses") && detail.lignes[1].startsWith("Transports"), detail);
+  check("toucher une enveloppe ouvre ses dépenses sur la période", detail.vue === "view-depenses" && /Courses/.test(detail.filtre) && detail.nb === 2, detail);
+
+  // ------------------------------------------------ v2 : listes longues, balayage, mois, tiroirs
+  console.log("\nListes longues, gestes, tiroirs");
+  await boot(page, `baseData({ expenses: Array.from({ length: 130 }, (_, i) => ({ id: "p" + i, montant: 100 + i, libelle: "L" + i, date: mkey(0) + "-" + String(1 + (i % 27)).padStart(2, "0"), envelopeId: "e2", createdAt: i })) })`);
+  const pages = await evalOn(page, `go("depenses"); await wait(260);
+    const premiere = qa("#tx-list .tx").length;
+    const bouton = q("#tx-more") ? q("#tx-more").textContent : null;
+    q("#tx-more").click(); await wait(160);
+    const seconde = qa("#tx-list .tx").length;
+    q("#select-toggle").click(); await wait(150); q("#bulk-all").click(); await wait(150);
+    return { premiere, bouton, seconde, tout: q("#bulk-count").textContent };`);
+  check("la liste monte 60 lignes à la fois", pages.premiere === 60 && /70/.test(pages.bouton || ""), pages);
+  check("« Afficher plus » en ajoute 60", pages.seconde === 120, pages);
+  check("« Tout sélectionner » prend tout, pas seulement l'affiché", /130 sélectionn/.test(pages.tout), pages);
+
+  await boot(page, `baseData({ expenses: [
+      { id: "g1", montant: 1000, libelle: "A balayer", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 },
+      { id: "g2", montant: 2000, libelle: "B reste", date: mkey(0) + "-01", envelopeId: "e2", createdAt: 0 } ] })`);
+  const balayage = await evalOn(page, `go("depenses"); await wait(250);
+    const ev = (t, x) => new PointerEvent(t, { bubbles: true, clientX: x, clientY: 300, pointerId: 7 });
+    const ligne = () => qa("#tx-list .tx")[0];
+    // un petit balayage ne supprime rien
+    let r = ligne(); r.dispatchEvent(ev("pointerdown", 300)); r.dispatchEvent(ev("pointermove", 270)); r.dispatchEvent(ev("pointermove", 250)); r.dispatchEvent(ev("pointerup", 250)); await wait(500);
+    const apresPetit = stored().expenses.length;
+    // un grand balayage supprime, et offre Annuler
+    r = ligne(); r.dispatchEvent(ev("pointerdown", 300)); r.dispatchEvent(ev("pointermove", 250)); r.dispatchEvent(ev("pointermove", 120)); r.dispatchEvent(ev("pointerup", 120)); await wait(600);
+    const apresGrand = stored().expenses.map((t) => t.id);
+    const offre = q(".toast-action") ? q(".toast-action").textContent : null;
+    const tiroirOuvert = qa(".sheet").some((x) => x.classList.contains("show"));
+    q(".toast-action").click(); await wait(250);
+    return { apresPetit, apresGrand, offre, tiroirOuvert, rendu: stored().expenses.length };`);
+  check("un petit balayage ne supprime rien", balayage.apresPetit === 2, balayage);
+  check("un grand balayage supprime la ligne", balayage.apresGrand.length === 1 && balayage.apresGrand[0] === "g2", balayage);
+  check("…sans ouvrir de tiroir, avec Annuler", balayage.tiroirOuvert === false && balayage.offre === "Annuler", balayage);
+  check("Annuler la rend", balayage.rendu === 2, balayage);
+
+  const selecteur = await evalOn(page, `go("accueil"); await wait(200);
+    q("#month-label").click(); await wait(380);
+    const ouvert = q("#sheet-month").classList.contains("show");
+    const cases = qa("#month-grid button").length;
+    const courant = q("#month-grid .on").dataset.pickMonth;
+    q("#year-prev").click(); await wait(80);
+    const annee = q("#year-label").textContent;
+    q("#month-grid button").click(); await wait(420);
+    const choisi = q("#month-name").textContent;
+    const inert = q(".app").inert;
+    return { ouvert, cases, courant: courant === mkey(0), annee, choisi, inert };`);
+  check("le titre du mois ouvre un sélecteur de 12 mois", selecteur.ouvert && selecteur.cases === 12 && selecteur.courant, selecteur);
+  check("on y change d'année et de mois", Number(selecteur.annee) === new Date().getFullYear() - 1 && selecteur.choisi === "Janvier", selecteur);
+  check("fermé, il rend la main à l'appli", selecteur.inert === false, selecteur);
+
+  const tiroirs = await evalOn(page, `go("accueil"); await wait(200);
+    q("#fab").focus();
+    q("#fab").click(); await wait(420);
+    const inertOuvert = q(".app").inert;
+    const focusDans = q("#sheet-tx").contains(document.activeElement);
+    const sheet = q("#sheet-tx");
+    const grip = sheet.querySelector(".sheet-grip");
+    const pev = (t, y) => new PointerEvent(t, { bubbles: true, clientX: 100, clientY: y, pointerId: 3 });
+    grip.dispatchEvent(pev("pointerdown", 100)); document.dispatchEvent(pev("pointermove", 260)); document.dispatchEvent(pev("pointerup", 260)); await wait(450);
+    const ferme = !sheet.classList.contains("show");
+    const retour = document.activeElement === q("#fab");
+    // un petit glissé revient
+    q("#fab").click(); await wait(420);
+    grip.dispatchEvent(pev("pointerdown", 100)); document.dispatchEvent(pev("pointermove", 120)); document.dispatchEvent(pev("pointerup", 120)); await wait(450);
+    const reste = sheet.classList.contains("show");
+    q("#sheet-tx .sheet-close").click(); await wait(420);
+    return { inertOuvert, focusDans, ferme, retour, reste, inertFerme: q(".app").inert };`);
+  check("tiroir ouvert : le reste de l'appli est inerte, le focus entre dedans", tiroirs.inertOuvert && tiroirs.focusDans, tiroirs);
+  check("glisser la poignée vers le bas ferme le tiroir", tiroirs.ferme, tiroirs);
+  check("le focus retourne au bouton d'origine", tiroirs.retour, tiroirs);
+  check("un petit glissé ne ferme pas", tiroirs.reste, tiroirs);
+  check("la fermeture rend l'appli utilisable", tiroirs.inertFerme === false, tiroirs);
+
+  const clavier = await evalOn(page, `q("#fab").click(); await wait(420);
+    const bouton = q('#tx-type [data-type="depense"]');
+    bouton.focus();
+    bouton.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); await wait(120);
+    const type = q("#tx-type button.on").dataset.type;
+    q('#tx-date-quick [data-ago="1"]').click();
+    const hier = new Date(); hier.setDate(hier.getDate() - 1);
+    const attendu = hier.getFullYear() + "-" + String(hier.getMonth() + 1).padStart(2, "0") + "-" + String(hier.getDate()).padStart(2, "0");
+    const date = q("#tx-date").value;
+    q("#sheet-tx .sheet-close").click(); await wait(420);
+    return { type, date, attendu };`);
+  check("les flèches parcourent un groupe radio", clavier.type === "revenu", clavier);
+  check("« Hier » règle la date", clavier.date === clavier.attendu, clavier);
 
   // ------------------------------------------------ aucune exception
   const real = [...new Set(errors)];
