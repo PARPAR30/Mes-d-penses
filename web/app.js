@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "1.8.1";
+const APP_VERSION = "1.10.0";
 
 /* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
    prend la teinte suivante, jamais une couleur tirée au hasard.
@@ -25,7 +25,14 @@ const DEFAULT_ENVELOPES = [
   { nom: "Transports", couleur: "#23A26D", budget: 15000 },
   { nom: "Sorties", couleur: "#7B57D6", budget: 20000 },
   { nom: "Abonnements", couleur: "#B8820A", budget: 6000 },
+  { nom: "Évitable", couleur: "#D6497E", budget: 5000 },
 ];
+
+/* « Évitable » : ce qu'on aurait pu ne pas dépenser (achat d'impulsion, livraison,
+   café du matin). Ajoutée aux sauvegardes antérieures à la 1.9, UNE fois — le
+   drapeau `settings.evitable` empêche de la ressusciter après une suppression. */
+const EVITABLE = DEFAULT_ENVELOPES.find((e) => e.nom === "Évitable");
+const noAccent = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
 /* Au-delà de six parts, la queue est repliée dans « Autres » : ajouter
    des couleurs les rendrait indistinguables les unes des autres. */
@@ -85,7 +92,10 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 const $ = (sel) => document.querySelector(sel);
 const eur = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
-const money = (cents) => eur.format(cents / 100);
+/* L'espace des milliers de fr-FR est une espace fine insécable (U+202F) : dans
+   Archivo, avec les chiffres tabulaires, elle se réduit à un filet et « 1 090,29 »
+   se lit « 1090,29 ». On la remplace par l'espace insécable ordinaire. */
+const money = (cents) => eur.format(cents / 100).replace(/\u202f/g, "\u00a0");
 
 /* Centimes -> texte du champ montant : « 31,50 », mais « 850 » pour un euro
    rond. String(31.5) donnait « 31,5 » : sur le chiffre principal de l'ecran,
@@ -149,6 +159,39 @@ function sizeAmountInput(input) {
   input.style.width = `${Math.min((width * size) / base + 4, max)}px`;
 }
 
+/* Montant compact pour les petits espaces (graphique des mois) : « 850 € », « 1,1 k€ ». */
+function compactMoney(cents) {
+  const euros = Math.round(cents / 100);
+  if (euros < 1000) return `${euros}\u00a0€`;
+  const k = euros / 1000;
+  return `${(k >= 10 ? Math.round(k) : Math.round(k * 10) / 10).toString().replace(".", ",")}\u00a0k€`;
+}
+
+/* Encre lisible sur une couleur d'enveloppe : blanc ou quasi-noir, selon la luminance. */
+function onColor(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return "#fff";
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const c = parseInt(m[1].slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.3 ? "#1B1E24" : "#fff";
+}
+
+const initialOf = (nom) => (Array.from(nom || "?")[0] || "?").toUpperCase();
+
+/* Pastille d'enveloppe : couleur + INITIALE. La couleur seule ne tient pas pour
+   deux teintes proches (rose / rouge) ni pour un œil daltonien ; la lettre, si. */
+function badge(className, couleur, text) {
+  const el = document.createElement("span");
+  el.className = className;
+  el.setAttribute("aria-hidden", "true");
+  el.style.setProperty("--c", couleur);
+  el.style.setProperty("--on", onColor(couleur));
+  el.textContent = text;
+  return el;
+}
+
 const pad = (n) => String(n).padStart(2, "0");
 const isoDay = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const monthOf = (isoDate) => isoDate.slice(0, 7);
@@ -194,7 +237,7 @@ function seed() {
     expenses: [],
     incomes: [],
     recurring: [],
-    settings: { theme: "auto", chart: "barre" },
+    settings: { theme: "auto", chart: "barre", envSort: "ordre", evitable: true },
     updatedAt: Date.now(),
   };
 }
@@ -214,6 +257,7 @@ function isSane(d) {
    l'import dit combien d'enregistrements il a dû laisser de côté. */
 
 let lastRepairCount = 0;
+let lastAddedEvitable = false;
 
 const isMonth = (v) => typeof v === "string" && /^\d{4}-\d{2}$/.test(v);
 const isIsoDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
@@ -244,9 +288,10 @@ function normalizeData(data) {
   const drop = () => { dropped++; return null; };
   const keep = (x) => x !== null;
 
-  data.settings = { theme: "auto", chart: "barre", ...data.settings };
+  data.settings = { theme: "auto", chart: "barre", envSort: "ordre", ...data.settings };
   if (!["auto", "light", "dark"].includes(data.settings.theme)) data.settings.theme = "auto";
   if (!["barre", "camembert"].includes(data.settings.chart)) data.settings.chart = "barre";
+  if (!["ordre", "entame"].includes(data.settings.envSort)) data.settings.envSort = "ordre";
 
   data.envelopes = (Array.isArray(data.envelopes) ? data.envelopes : [])
     .map((e, i) => {
@@ -262,6 +307,20 @@ function normalizeData(data) {
       };
     })
     .filter(keep);
+
+  // sauvegarde antérieure à 1.9 : on propose « Évitable », sauf si elle existe déjà
+  lastAddedEvitable = false;
+  if (!data.settings.evitable) {
+    data.settings.evitable = true;
+    if (!data.envelopes.some((e) => noAccent(e.nom) === "evitable")) {
+      data.envelopes.push({
+        id: uid(),
+        ...EVITABLE,
+        ordre: data.envelopes.reduce((n, e) => Math.max(n, e.ordre + 1), 0),
+      });
+      lastAddedEvitable = true;
+    }
+  }
 
   const known = new Set(data.envelopes.map((e) => e.id));
 
@@ -338,6 +397,15 @@ const state = {
   query: "",
   focusSlice: null,
   focusSticky: false,
+  filtersOpen: false,
+  period: "mois", // mois | 30j | 3m | annee | tout | perso
+  dateFrom: "",
+  dateTo: "",
+  amountMin: null, // centimes, ou null
+  amountMax: null,
+  selecting: false,
+  picked: new Set(),
+  draftBulkEnv: "",
   calDay: null,
   managing: false,
   editingTx: null,
@@ -497,8 +565,17 @@ function render() {
     ? "Cet appareil"
     : state.month === thisMonth
       ? state.month.slice(0, 4)
-      : "Revenir au mois en cours";
-  $("#fab").hidden = reglages;
+      : "Mois en cours";
+  $("#open-settings").classList.toggle("on", reglages);
+  $("#open-settings").setAttribute("aria-current", reglages ? "page" : "false");
+
+  // la sélection n'a de sens que dans la liste des mouvements
+  if (state.view !== "depenses") {
+    state.selecting = false;
+    state.picked.clear();
+  }
+  $("#tabbar").hidden = state.selecting;
+  $("#bulkbar").hidden = !state.selecting;
 
   for (const el of document.querySelectorAll(".view")) el.hidden = el.id !== `view-${state.view}`;
   for (const b of document.querySelectorAll(".tabbar button")) b.classList.toggle("on", b.dataset.view === state.view);
@@ -518,7 +595,9 @@ function render() {
 function positionTabPill() {
   const pill = $("#tab-pill");
   const active = $(".tabbar button.on");
-  if (!pill || !active) return;
+  if (!pill) return;
+  // en Réglages (hors barre d'onglets) aucun onglet n'est actif : la pastille s'efface
+  if (!active) return void pill.classList.remove("ready");
   const width = active.offsetWidth;
   if (!width) return; // barre pas encore mesurable : on repassera au prochain rendu
   pill.style.width = `${width}px`;
@@ -602,10 +681,22 @@ function renderAccueil() {
   $("#toggle-manage").textContent = state.managing ? "Terminé" : "Gérer";
   $("#toggle-manage").classList.toggle("on", state.managing);
 
+  /* Tri « plus entamées » : les enveloppes les plus proches de la limite (ou
+     déjà dépassées) remontent en tête — c'est là qu'il y a quelque chose à
+     faire. En mode Gérer l'ordre est celui que l'on règle, donc toujours le sien. */
+  const byUse = state.data.settings.envSort === "entame" && !state.managing;
+  const use = (e) => (e.budget > 0 ? (perEnv[e.id] || 0) / e.budget : perEnv[e.id] ? Infinity : 0);
+  const shown = envelopes();
+  if (byUse) shown.sort((a, b) => use(b) - use(a));
+  const sortBtn = $("#toggle-sort");
+  sortBtn.hidden = state.managing;
+  sortBtn.textContent = byUse ? "↓ Plus entamées" : "↓ Mon ordre";
+  sortBtn.setAttribute("aria-label", byUse ? "Tri : plus entamées d'abord. Revenir à mon ordre" : "Tri : mon ordre. Trier par enveloppe la plus entamée");
+
   const list = $("#env-list");
   list.replaceChildren();
 
-  for (const env of envelopes()) {
+  for (const env of shown) {
     const spentHere = perEnv[env.id] || 0;
     const over = spentHere > env.budget;
     const pct = env.budget > 0 ? Math.round((spentHere / env.budget) * 100) : spentHere > 0 ? 100 : 0;
@@ -618,8 +709,7 @@ function renderAccueil() {
 
     const head = document.createElement("span");
     head.className = "env-head";
-    const dot = document.createElement("span");
-    dot.className = "env-dot";
+    const dot = badge("env-dot", env.couleur, initialOf(env.nom));
     const name = document.createElement("b");
     name.className = "env-n";
     name.textContent = env.nom;
@@ -703,6 +793,57 @@ function emptyBlock(title, sub) {
   return box;
 }
 
+/* ---- filtres de la liste : période et montant ---- */
+
+const PERIOD_LABEL = {
+  "30j": "sur 30 jours",
+  "3m": "sur 3 mois",
+  annee: "depuis le début de l'année",
+  tout: "dans tout l'historique",
+};
+
+/** Bornes ISO [du, au] de la période choisie, ou null pour « le mois affiché » / « tout ». */
+function periodRange() {
+  const today = todayIso();
+  const thisMonth = today.slice(0, 7);
+  switch (state.period) {
+    case "30j": {
+      const d = new Date();
+      d.setDate(d.getDate() - 29);
+      return { from: isoDay(d), to: today };
+    }
+    case "3m": return { from: `${shiftMonth(thisMonth, -2)}-01`, to: today };
+    case "annee": return { from: `${today.slice(0, 4)}-01-01`, to: today };
+    case "perso": return { from: state.dateFrom || "0000-00-00", to: state.dateTo || "9999-99-99" };
+    default: return null;
+  }
+}
+
+/** Nombre de réglages de filtre qui s'écartent de l'affichage par défaut. */
+const activeFilters = () =>
+  (state.period !== "mois" ? 1 : 0) + (state.amountMin !== null ? 1 : 0) + (state.amountMax !== null ? 1 : 0);
+
+function renderFilters() {
+  const n = activeFilters();
+  $("#filters").hidden = !state.filtersOpen;
+  $("#filters-toggle").setAttribute("aria-expanded", String(state.filtersOpen));
+  $("#filters-toggle").classList.toggle("on", state.filtersOpen || n > 0);
+  $("#filters-count").hidden = !n;
+  $("#filters-count").textContent = String(n);
+  $("#filters-reset").hidden = !n;
+  $("#range-dates").hidden = state.period !== "perso";
+  for (const b of document.querySelectorAll("[data-period]")) {
+    const on = b.dataset.period === state.period;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+  $("#select-toggle").textContent = state.selecting ? "Terminer" : "Sélectionner";
+  $("#select-toggle").setAttribute("aria-pressed", String(state.selecting));
+  $("#select-toggle").classList.toggle("on", state.selecting);
+}
+
+const keyOf = (tx) => `${tx.kind}:${tx.id}`;
+
 function renderDepenses() {
   const list = $("#tx-list");
   list.replaceChildren();
@@ -711,20 +852,28 @@ function renderDepenses() {
   $("#filter-bar").hidden = !filter;
   if (filter) $("#filter-label").textContent = `Enveloppe : ${filter.nom}`;
   $("#clear-search").hidden = !state.query;
+  renderFilters();
 
   const query = state.query.trim().toLowerCase();
+  const range = periodRange();
 
   /* Une recherche porte sur TOUT l'historique, pas sur le seul mois affiché.
      Chercher « boulangerie » et ne fouiller que septembre, c'est ne pas chercher :
-     on retrouvait une ligne sur deux sans jamais savoir que l'autre existait. */
+     on retrouvait une ligne sur deux sans jamais savoir que l'autre existait.
+     Une période choisie explicitement reprend la main : elle borne aussi la recherche. */
   const searching = Boolean(query);
-  const pool = searching
+  const wide = searching || state.period !== "mois";
+  const pool = wide
     ? [state.data.expenses, state.data.incomes]
     : [expensesOf(state.month), incomesOf(state.month)];
   let items = [
     ...pool[0].map((t) => ({ ...t, kind: "depense" })),
     ...pool[1].map((t) => ({ ...t, kind: "revenu" })),
   ];
+
+  if (range) items = items.filter((t) => t.date >= range.from && t.date <= range.to);
+  if (state.amountMin !== null) items = items.filter((t) => t.montant >= state.amountMin);
+  if (state.amountMax !== null) items = items.filter((t) => t.montant <= state.amountMax);
 
   // un filtre d'enveloppe ne s'applique qu'aux dépenses : un revenu n'en a pas
   if (filter) items = items.filter((t) => t.kind === "depense" && t.envelopeId === filter.id);
@@ -738,29 +887,41 @@ function renderDepenses() {
 
   items.sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : b.date.localeCompare(a.date)));
 
+  // la sélection ne garde que ce qui est encore affiché
+  const shownKeys = new Set(items.map(keyOf));
+  for (const k of state.picked) if (!shownKeys.has(k)) state.picked.delete(k);
+  renderBulkBar(items);
+
   // un filtre ou une recherche pose une question chiffrée (« combien chez eux ? ») :
   // le total de ce qui est affiché est la réponse, il n'a pas à être fait de tête
   const sum = $("#tx-sum");
-  sum.hidden = !(searching || filter) || !items.length;
+  sum.hidden = !(searching || filter || activeFilters()) || !items.length;
   if (!sum.hidden) {
     const out = items.filter((t) => t.kind === "depense").reduce((n, t) => n + t.montant, 0);
     const inc = items.filter((t) => t.kind === "revenu").reduce((n, t) => n + t.montant, 0);
     const bits = [`${items.length} mouvement${items.length > 1 ? "s" : ""}`];
-    if (searching) bits[0] += " dans tout l'historique";
+    if (state.period === "perso") bits[0] += " sur la période choisie";
+    else if (PERIOD_LABEL[state.period]) bits[0] += ` ${PERIOD_LABEL[state.period]}`;
+    else if (searching) bits[0] += " dans tout l'historique";
     if (out) bits.push(`−${money(out)}`);
     if (inc) bits.push(`+${money(inc)}`);
     sum.textContent = bits.join(" · ");
   }
 
   if (!items.length) {
+    const narrowed = Boolean(query) || Boolean(filter) || activeFilters() > 0;
     list.append(
       emptyBlock(
-        query ? "Rien trouvé" : "Rien pour ce mois-ci",
+        query || activeFilters() ? "Rien trouvé" : "Rien pour ce mois-ci",
         query
-          ? "Aucun mouvement de tout l'historique ne correspond à cette recherche."
-          : filter
-            ? "Aucune dépense dans cette enveloppe."
-            : "Touche le bouton + pour noter une dépense ou un revenu."
+          ? "Aucun mouvement ne correspond à cette recherche."
+          : activeFilters()
+            ? "Aucun mouvement ne correspond à ces filtres."
+            : filter
+              ? "Aucune dépense dans cette enveloppe."
+              : narrowed
+                ? "Rien à afficher."
+                : "Touche le bouton + pour noter une dépense ou un revenu."
       )
     );
     return;
@@ -772,7 +933,7 @@ function renderDepenses() {
       currentDay = tx.date;
       const head = document.createElement("p");
       head.className = "tx-day";
-      head.textContent = dayHeading(tx.date, searching);
+      head.textContent = dayHeading(tx.date, wide);
       list.append(head);
     }
 
@@ -784,9 +945,22 @@ function renderDepenses() {
     row.dataset.tx = tx.id;
     row.dataset.kind = tx.kind;
 
-    const dot = document.createElement("span");
-    dot.className = "tx-dot";
-    dot.style.setProperty("--c", revenu ? "var(--positive)" : env ? env.couleur : "#9AA0AC");
+    if (state.selecting) {
+      const picked = state.picked.has(keyOf(tx));
+      row.classList.toggle("is-picked", picked);
+      row.setAttribute("role", "checkbox");
+      row.setAttribute("aria-checked", String(picked));
+      const box = document.createElement("span");
+      box.className = "tx-check";
+      box.setAttribute("aria-hidden", "true");
+      row.append(box);
+    }
+
+    const dot = badge(
+      "tx-dot",
+      revenu ? "var(--positive)" : env ? env.couleur : "#9AA0AC",
+      revenu ? "+" : env ? initialOf(env.nom) : "?"
+    );
 
     const text = document.createElement("span");
     text.className = "tx-t";
@@ -804,6 +978,17 @@ function renderDepenses() {
     row.append(dot, text, amount);
     list.append(row);
   }
+}
+
+/** Barre d'actions du mode sélection : compteur, « tout », et ce qu'on peut faire. */
+function renderBulkBar(items) {
+  if (!state.selecting) return;
+  const n = state.picked.size;
+  $("#bulk-count").textContent = n ? `${n} sélectionné${n > 1 ? "s" : ""}` : "Touche des lignes pour les choisir";
+  $("#bulk-all").textContent = n && n === items.length ? "Tout désélectionner" : "Tout sélectionner";
+  $("#bulk-all").hidden = !items.length;
+  $("#bulk-edit").disabled = !n;
+  $("#bulk-delete").disabled = !n;
 }
 
 function renderBilan() {
@@ -832,6 +1017,16 @@ function renderBilan() {
       `Revenus +${money(income)} · solde ${net < 0 ? "−" : "+"}${money(Math.abs(net))}`;
   }
 
+  // la raison d'être de l'enveloppe « Évitable » : voir d'un coup ce qui aurait pu ne pas être dépensé
+  const evitable = state.data.envelopes.find((e) => noAccent(e.nom) === "evitable");
+  const avoidable = evitable ? spentByEnv(state.month)[evitable.id] || 0 : 0;
+  $("#bilan-evitable").hidden = !avoidable;
+  if (avoidable) {
+    $("#bilan-evitable").style.setProperty("--c", evitable.couleur);
+    const part = Math.round((avoidable / spent) * 100);
+    $("#bilan-evitable").textContent = `dont évitable ${money(avoidable)} · ${part} % des dépenses`;
+  }
+
   const keys = [];
   for (let i = 5; i >= 0; i--) keys.push(shiftMonth(state.month, -i));
   const totals = keys.map((k) => totalSpent(k));
@@ -849,6 +1044,13 @@ function renderBilan() {
     bar.dataset.month = key;
     bar.style.setProperty("--h", `${Math.max((totals[i] / max) * 100, 3)}%`);
     if (key === state.month) bar.classList.add("on");
+    if (!totals[i]) bar.classList.add("is-empty");
+    // le total au-dessus de sa barre : sans lui il faut toucher chaque mois pour le connaître
+    const amount = document.createElement("span");
+    amount.className = "hist-v";
+    amount.setAttribute("aria-hidden", "true");
+    amount.textContent = totals[i] ? compactMoney(totals[i]) : "–";
+    bar.append(amount);
     bar.setAttribute("aria-label", `${monthName(key)} : ${money(totals[i])}`);
     bar.title = `${monthName(key)} : ${money(totals[i])}`;
     hist.append(bar);
@@ -932,9 +1134,11 @@ function renderRepartition(total) {
     line.className = "legend-row" + (active ? " on" : "");
     line.dataset.slice = row.id;
 
-    const dot = document.createElement("span");
-    dot.className = "legend-dot" + (row.couleur ? "" : " is-other");
-    if (row.couleur) dot.style.setProperty("--c", row.couleur);
+    const dot = badge(
+      "legend-dot" + (row.couleur ? "" : " is-other"),
+      row.couleur || "#6E7686",
+      row.id === NO_ENV ? "?" : row.couleur ? initialOf(row.nom) : "…"
+    );
 
     const name = document.createElement("span");
     name.className = "legend-n";
@@ -1029,9 +1233,11 @@ function renderReglages() {
   $("#data-stat").textContent =
     `${n} dépense${n > 1 ? "s" : ""} · ${inc} revenu${inc > 1 ? "s" : ""} · ${e} enveloppe${e > 1 ? "s" : ""} · ${r} récurrente${r > 1 ? "s" : ""} · modifié le ${when}`;
   $("#version").textContent = `Mon Budget ${APP_VERSION}`;
-  $("#install-stat").textContent = isStandalone()
-    ? "Ouverte depuis l'écran d'accueil — plein écran, hors connexion."
-    : "Ouverte dans le navigateur : installe-la pour gagner la place de la barre d'outils.";
+  // déjà installée : la carte d'instructions n'a plus rien à apprendre
+  const installed = isStandalone();
+  $("#install-head").hidden = installed;
+  $("#install-card").hidden = installed;
+  $("#install-stat").textContent = "Ouverte dans le navigateur : installe-la pour gagner la place de la barre d'outils.";
 
   // un fichier local (double-clic), ou l'appli de bureau sur son hôte interne,
   // n'a pas d'adresse qu'un raccourci sur un autre appareil puisse rouvrir
@@ -1228,6 +1434,29 @@ function closeSheets() {
   disarmAll();
 }
 
+/* Clavier à l'écran. Sur iPhone, quand le clavier monte, c'est la fenêtre VISIBLE
+   (visualViewport) qui rétrécit ; la fenêtre de mise en page ne bouge pas, et un
+   tiroir « bottom:0 » reste donc planqué DERRIÈRE le clavier — sur un SE, il ne
+   restait de visible que la poignée. On mesure l'écart et on remonte le tiroir
+   d'autant, en limitant sa hauteur à ce qui est réellement visible. */
+function fitSheetsToViewport() {
+  const vv = window.visualViewport;
+  const root = document.documentElement.style;
+  if (!vv) return;
+  const keyboard = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+  root.setProperty("--kb", `${keyboard}px`);
+  root.setProperty("--vvh", `${Math.round(vv.height)}px`);
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", fitSheetsToViewport);
+  window.visualViewport.addEventListener("scroll", fitSheetsToViewport);
+}
+// le champ touché doit rester visible : on le ramène au centre du tiroir une fois le clavier levé
+document.addEventListener("focusin", (e) => {
+  if (!e.target.closest?.(".sheet") || !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  setTimeout(() => e.target.scrollIntoView({ block: "center", behavior: "smooth" }), 320);
+});
+
 /**
  * @param {object|null} tx    mouvement à modifier, ou null pour une création
  * @param {{montantText?:string, envId?:string, libelle?:string}|null} prefill
@@ -1275,8 +1504,10 @@ function renderTxEnvPicker() {
     b.type = "button";
     b.role = "radio";
     b.dataset.pick = env.id;
+    b.dataset.i = initialOf(env.nom);
     b.textContent = env.nom;
     b.style.setProperty("--c", env.couleur);
+    b.style.setProperty("--on", onColor(env.couleur));
     b.classList.toggle("on", env.id === state.draftEnv);
     b.setAttribute("aria-checked", String(env.id === state.draftEnv));
     picker.append(b);
@@ -1362,8 +1593,10 @@ function openRecurringSheet(rule, defaultType = "depense") {
     b.type = "button";
     b.role = "radio";
     b.dataset.pick = env.id;
+    b.dataset.i = initialOf(env.nom);
     b.textContent = env.nom;
     b.style.setProperty("--c", env.couleur);
+    b.style.setProperty("--on", onColor(env.couleur));
     b.classList.toggle("on", env.id === state.draftRecurringEnv);
     b.setAttribute("aria-checked", String(env.id === state.draftRecurringEnv));
     picker.append(b);
@@ -1480,16 +1713,53 @@ function disarmAll() {
 /* ---------------------------------------------------------- toast */
 
 let toastTimer;
-function toast(message) {
+let toastHideTimer;
+
+function hideToast() {
   const el = $("#toast");
-  el.textContent = message;
+  clearTimeout(toastTimer);
+  el.classList.remove("show");
+  clearTimeout(toastHideTimer);
+  toastHideTimer = setTimeout(() => (el.hidden = true), 260);
+}
+
+/** @param {{label:string, run:()=>void}} [action]  bouton d'action (« Annuler ») */
+function toast(message, action) {
+  const el = $("#toast");
+  clearTimeout(toastHideTimer);
+  el.replaceChildren(document.createTextNode(message));
+  el.classList.toggle("has-action", Boolean(action));
+  if (action) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "toast-action";
+    btn.textContent = action.label;
+    btn.addEventListener("click", () => {
+      hideToast();
+      action.run();
+    });
+    el.append(btn);
+  }
   el.hidden = false;
   requestAnimationFrame(() => el.classList.add("show"));
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    el.classList.remove("show");
-    setTimeout(() => (el.hidden = true), 260);
-  }, 2600);
+  // un message à lire dure 2,6 s ; une action à saisir laisse le temps du pouce
+  toastTimer = setTimeout(hideToast, action ? 7000 : 2600);
+}
+
+/* Annuler une suppression. Plutôt que de restaurer un instantané de TOUTES les
+   données (ce qui effacerait ce qui a été noté dans l'intervalle), chaque
+   suppression fournit sa propre remise en place : on ne rend que ce qu'on a pris. */
+function offerUndo(message, restore) {
+  toast(message, {
+    label: "Annuler",
+    run: () => {
+      restore();
+      save();
+      render();
+      toast("Rétabli.");
+    },
+  });
 }
 
 /* ---------------------------------------------------------- import / export */
@@ -1569,10 +1839,8 @@ $("#cal-grid").addEventListener("click", (e) => {
   render();
 });
 
-$("#tabbar").addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-view]");
-  if (!btn) return;
-  state.view = btn.dataset.view;
+function showView(view) {
+  state.view = view;
   if (state.view !== "depenses") state.filterEnv = null;
   clearFocus();
   // « Tout effacer » vit dans une vue, pas dans un tiroir : sans ça il restait
@@ -1580,7 +1848,14 @@ $("#tabbar").addEventListener("click", (e) => {
   // suffisait à effacer le budget d'un seul appui
   disarmAll();
   render();
-});
+}
+// onglets de la barre du bas, et engrenage Réglages dans la barre du haut
+for (const bar of ["#tabbar", "#topbar"]) {
+  $(bar).addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-view]");
+    if (btn) showView(btn.dataset.view);
+  });
+}
 
 // le titre du mois ramène au mois en cours quand on s'en est éloigné
 $("#month-label").addEventListener("click", () => {
@@ -1663,6 +1938,12 @@ $("#chart-mode").addEventListener("click", (e) => {
 
 $("#fab").addEventListener("click", () => openTxSheet(null));
 
+$("#toggle-sort").addEventListener("click", () => {
+  state.data.settings.envSort = state.data.settings.envSort === "entame" ? "ordre" : "entame";
+  save();
+  render();
+});
+
 $("#toggle-manage").addEventListener("click", () => {
   state.managing = !state.managing;
   render();
@@ -1702,6 +1983,12 @@ $("#tx-list").addEventListener("click", (e) => {
   const row = e.target.closest("[data-tx]");
   if (!row) return;
   const kind = row.dataset.kind === "revenu" ? "revenu" : "depense";
+  if (state.selecting) {
+    const key = `${kind}:${row.dataset.tx}`;
+    if (!state.picked.delete(key)) state.picked.add(key);
+    disarmAll();
+    return renderDepenses();
+  }
   const source = kind === "revenu" ? state.data.incomes : state.data.expenses;
   const tx = source.find((t) => t.id === row.dataset.tx);
   if (tx) openTxSheet(tx, null, kind);
@@ -1710,6 +1997,166 @@ $("#tx-list").addEventListener("click", (e) => {
 $("#clear-filter").addEventListener("click", () => {
   state.filterEnv = null;
   render();
+});
+
+/* ---- filtres : période et montant ---- */
+$("#filters-toggle").addEventListener("click", () => {
+  state.filtersOpen = !state.filtersOpen;
+  renderDepenses();
+});
+
+$("#period-chips").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-period]");
+  if (!btn) return;
+  state.period = btn.dataset.period;
+  renderDepenses();
+});
+
+for (const [id, key] of [["#date-from", "dateFrom"], ["#date-to", "dateTo"]]) {
+  $(id).addEventListener("input", (e) => {
+    state[key] = e.target.value;
+    renderDepenses();
+  });
+}
+
+// un champ vide ou illisible ne filtre pas : « 0 » ou du texte ne doit pas tout masquer
+for (const [id, key] of [["#amount-min", "amountMin"], ["#amount-max", "amountMax"]]) {
+  $(id).addEventListener("input", (e) => {
+    state[key] = parseAmount(e.target.value);
+    renderDepenses();
+  });
+}
+
+$("#filters-reset").addEventListener("click", () => {
+  state.period = "mois";
+  state.dateFrom = state.dateTo = "";
+  state.amountMin = state.amountMax = null;
+  for (const id of ["#date-from", "#date-to", "#amount-min", "#amount-max"]) $(id).value = "";
+  renderDepenses();
+});
+
+/* ---- sélection multiple ---- */
+function setSelecting(on) {
+  state.selecting = on;
+  state.picked.clear();
+  disarmAll();
+  render();
+}
+$("#select-toggle").addEventListener("click", () => setSelecting(!state.selecting));
+$("#bulk-done").addEventListener("click", () => setSelecting(false));
+
+$("#bulk-all").addEventListener("click", () => {
+  const keys = [...document.querySelectorAll("#tx-list .tx")].map((r) => `${r.dataset.kind}:${r.dataset.tx}`);
+  const all = keys.length > 0 && keys.every((k) => state.picked.has(k));
+  state.picked.clear();
+  if (!all) for (const k of keys) state.picked.add(k);
+  disarmAll();
+  renderDepenses();
+});
+
+/** Mouvements réellement choisis, avec leur nature. */
+function pickedItems() {
+  const out = [];
+  for (const key of state.picked) {
+    const [kind, id] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+    const item = (kind === "revenu" ? state.data.incomes : state.data.expenses).find((t) => t.id === id);
+    if (item) out.push({ kind, item });
+  }
+  return out;
+}
+
+$("#bulk-delete").addEventListener("click", (e) => {
+  const n = state.picked.size;
+  if (!n) return;
+  armDanger(e.currentTarget, `Supprimer ${n} ?`, () => {
+    const taken = pickedItems();
+    const ids = (kind) => new Set(taken.filter((t) => t.kind === kind).map((t) => t.item.id));
+    const [dep, rev] = [ids("depense"), ids("revenu")];
+    state.data.expenses = state.data.expenses.filter((t) => !dep.has(t.id));
+    state.data.incomes = state.data.incomes.filter((t) => !rev.has(t.id));
+    save();
+    setSelecting(false);
+    offerUndo(`${taken.length} mouvement${taken.length > 1 ? "s supprimés" : " supprimé"}.`, () => {
+      for (const { kind, item } of taken) (kind === "revenu" ? state.data.incomes : state.data.expenses).push(item);
+    });
+  });
+});
+
+$("#bulk-edit").addEventListener("click", () => {
+  const taken = pickedItems();
+  if (!taken.length) return;
+  const nb = taken.length;
+  const expenses = taken.filter((t) => t.kind === "depense").length;
+  state.draftBulkEnv = "";
+  $("#bulk-title").textContent = `Modifier ${nb} mouvement${nb > 1 ? "s" : ""}`;
+  $("#bulk-note").textContent =
+    expenses === nb
+      ? "Ce que tu renseignes s'applique à toute la sélection ; le reste ne bouge pas."
+      : "Les revenus n'ont pas d'enveloppe : seule la date les concerne.";
+  $("#bulk-env-block").hidden = expenses === 0;
+  $("#bulk-date").value = "";
+  renderBulkEnvPicker();
+  openSheet("#sheet-bulk");
+});
+
+function renderBulkEnvPicker() {
+  const picker = $("#bulk-env-picker");
+  picker.replaceChildren();
+  const keep = document.createElement("button");
+  keep.type = "button";
+  keep.role = "radio";
+  keep.dataset.pick = "";
+  keep.className = "is-keep";
+  keep.textContent = "Inchangée";
+  keep.classList.toggle("on", state.draftBulkEnv === "");
+  keep.setAttribute("aria-checked", String(state.draftBulkEnv === ""));
+  picker.append(keep);
+  for (const env of envelopes()) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.role = "radio";
+    b.dataset.pick = env.id;
+    b.dataset.i = initialOf(env.nom);
+    b.textContent = env.nom;
+    b.style.setProperty("--c", env.couleur);
+    b.style.setProperty("--on", onColor(env.couleur));
+    b.classList.toggle("on", env.id === state.draftBulkEnv);
+    b.setAttribute("aria-checked", String(env.id === state.draftBulkEnv));
+    picker.append(b);
+  }
+}
+
+$("#bulk-env-picker").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-pick]");
+  if (!btn) return;
+  state.draftBulkEnv = btn.dataset.pick;
+  renderBulkEnvPicker();
+});
+
+$("#bulk-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const taken = pickedItems();
+  const date = $("#bulk-date").value;
+  const env = state.draftBulkEnv;
+  if (!env && !date) return toast("Choisis une enveloppe ou une date à appliquer.");
+
+  // l'état d'origine de chaque ligne, pour que « Annuler » remette exactement ce qui était là
+  const before = taken.map(({ item }) => ({ item, envelopeId: item.envelopeId, date: item.date }));
+  let changed = 0;
+  for (const { kind, item } of taken) {
+    if (env && kind === "depense") item.envelopeId = env;
+    if (date) item.date = date;
+    changed++;
+  }
+  save();
+  closeSheets();
+  setSelecting(false);
+  offerUndo(`${changed} mouvement${changed > 1 ? "s modifiés" : " modifié"}.`, () => {
+    for (const b of before) {
+      if ("envelopeId" in b.item || b.envelopeId !== undefined) b.item.envelopeId = b.envelopeId;
+      b.item.date = b.date;
+    }
+  });
 });
 
 $("#scrim").addEventListener("click", closeSheets);
@@ -1799,12 +2246,15 @@ $("#tx-duplicate").addEventListener("click", () => {
 $("#tx-delete").addEventListener("click", (e) => {
   const revenu = state.editingTxType === "revenu";
   armDanger(e.currentTarget, "Confirmer la suppression ?", () => {
+    const removed = (revenu ? state.data.incomes : state.data.expenses).find((t) => t.id === state.editingTx);
     if (revenu) state.data.incomes = state.data.incomes.filter((t) => t.id !== state.editingTx);
     else state.data.expenses = state.data.expenses.filter((t) => t.id !== state.editingTx);
     save();
     closeSheets();
     render();
-    toast(revenu ? "Revenu supprimé." : "Dépense supprimée.");
+    offerUndo(revenu ? "Revenu supprimé." : "Dépense supprimée.", () => {
+      if (removed) (revenu ? state.data.incomes : state.data.expenses).push(removed);
+    });
   });
 });
 
@@ -1843,14 +2293,24 @@ $("#env-delete").addEventListener("click", (e) => {
   if (recurringCount) parts.push(`${recurringCount} dépense${recurringCount > 1 ? "s" : ""} récurrente${recurringCount > 1 ? "s" : ""}`);
   const question = parts.length ? `Supprimer aussi ${parts.join(" et ")} ?` : "Confirmer la suppression ?";
   armDanger(e.currentTarget, question, () => {
-    state.data.envelopes = state.data.envelopes.filter((x) => x.id !== state.editingEnv);
-    state.data.expenses = state.data.expenses.filter((t) => t.envelopeId !== state.editingEnv);
-    state.data.recurring = state.data.recurring.filter((r) => r.envelopeId !== state.editingEnv);
-    if (state.filterEnv === state.editingEnv) state.filterEnv = null;
+    const id = state.editingEnv;
+    const gone = {
+      env: state.data.envelopes.filter((x) => x.id === id),
+      expenses: state.data.expenses.filter((t) => t.envelopeId === id),
+      recurring: state.data.recurring.filter((r) => r.envelopeId === id),
+    };
+    state.data.envelopes = state.data.envelopes.filter((x) => x.id !== id);
+    state.data.expenses = state.data.expenses.filter((t) => t.envelopeId !== id);
+    state.data.recurring = state.data.recurring.filter((r) => r.envelopeId !== id);
+    if (state.filterEnv === id) state.filterEnv = null;
     save();
     closeSheets();
     render();
-    toast("Enveloppe supprimée.");
+    offerUndo("Enveloppe supprimée.", () => {
+      state.data.envelopes.push(...gone.env);
+      state.data.expenses.push(...gone.expenses);
+      state.data.recurring.push(...gone.recurring);
+    });
   });
 });
 
@@ -1983,10 +2443,13 @@ $("#recurring-delete").addEventListener("click", (e) => {
     save();
     closeSheets();
     render();
-    toast(
+    offerUndo(
       isRevenu
         ? "Revenu récurrent supprimé. Les montants déjà générés restent dans l'historique."
-        : "Dépense récurrente supprimée. Les dépenses déjà générées restent dans l'historique."
+        : "Dépense récurrente supprimée. Les dépenses déjà générées restent dans l'historique.",
+      () => {
+        if (rule) state.data.recurring.push(rule);
+      }
     );
   });
 });
@@ -2020,12 +2483,15 @@ $("#import-file").addEventListener("change", (e) => {
 
 $("#reset-btn").addEventListener("click", (e) => {
   armDanger(e.currentTarget, "Effacer définitivement ?", () => {
+    const before = state.data;
     state.data = seed();
     state.filterEnv = null;
     state.managing = false;
     save();
     render();
-    toast("Tout a été effacé.");
+    offerUndo("Tout a été effacé.", () => {
+      state.data = before;
+    });
   });
 });
 
@@ -2041,7 +2507,7 @@ function matchEnvelope(raw) {
   if (!raw) return null;
   const byId = envById(raw);
   if (byId) return byId;
-  const norm = (s) => s.trim().toLowerCase();
+  const norm = noAccent; // « evitable » tapé sans accent dans Raccourcis doit aussi trouver « Évitable »
   return envelopes().find((e) => norm(e.nom) === norm(raw)) ?? null;
 }
 
@@ -2076,13 +2542,14 @@ document.documentElement.dataset.standalone = isStandalone() ? "1" : "0";
    modification ne declenche d'ecriture, le fichier fautif reste sur le disque et
    se fait rereparer a chaque ouverture. On le reecrit une bonne fois, pour que
    l'export lui aussi parte propre. */
-if (lastRepairCount) save();
+if (lastRepairCount || lastAddedEvitable) save();
 
 render();
 const startup = generateRecurring();
 if (startup.created) render();
 const caughtUp = backfillMessage(startup);
 if (caughtUp) toast(caughtUp);
+else if (lastAddedEvitable) toast("Nouvelle enveloppe « Évitable » (50 € / mois) — modifiable via Gérer.");
 consumeShortcutLink();
 // les boutons d'onglet ne sont mesurables qu'une fois la mise en page faite
 requestAnimationFrame(positionTabPill);

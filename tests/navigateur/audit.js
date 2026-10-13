@@ -73,7 +73,7 @@ const SEED = `
   ];
   localStorage.setItem("mon-budget/v1", JSON.stringify({
     version: 1, envelopes: envs, expenses, incomes, recurring,
-    settings: { theme: "auto", chart: "barre" }, updatedAt: Date.now(),
+    settings: { theme: "auto", chart: "barre", evitable: true }, updatedAt: Date.now(),
   }));
 })();
 `;
@@ -87,7 +87,7 @@ window.vis = (el) => {
   const st = getComputedStyle(el);
   return r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none" && st.opacity !== "0";
 };
-window.go = (v) => { const b = q('.tabbar [data-view="' + v + '"]'); if (b) b.click(); };
+window.go = (v) => { const b = q('[data-view="' + v + '"]'); if (b) b.click(); };
 
 /* Plusieurs controles gardent leur dessin compact et elargissent leur seule zone
    d'appui, par un ::before absolu en inset negatif. Il faut donc mesurer CE
@@ -298,7 +298,7 @@ async function scan(page, label) {
 
   console.log("\n=== etat vide (aucune donnee) ===");
   await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-  await evalOn(page, `localStorage.clear(); localStorage.setItem("mon-budget/v1", JSON.stringify({version:1,envelopes:[],expenses:[],incomes:[],recurring:[],settings:{theme:"auto",chart:"barre"},updatedAt:Date.now()})); return 1;`);
+  await evalOn(page, `localStorage.clear(); localStorage.setItem("mon-budget/v1", JSON.stringify({version:1,envelopes:[],expenses:[],incomes:[],recurring:[],settings:{theme:"auto",chart:"barre",evitable:true},updatedAt:Date.now()})); return 1;`);
   await page.send("Page.navigate", { url: URL_APP + "?vide=1" });
   await new Promise((r) => setTimeout(r, 1500));
   for (const v of VIEWS) {

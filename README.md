@@ -50,13 +50,15 @@ La dépense n'est jamais enregistrée sans confirmation : le tiroir s'ouvre touj
 
 | | |
 |---|---|
-| Accueil | le reste à dépenser, la jauge par enveloppe, le repère de rythme et la projection de fin de mois |
-| Dépenses | les mouvements du mois, jour par jour ; la recherche, elle, ratisse **tout l'historique** et totalise ce qu'elle trouve |
-| Bilan | comparaison au mois précédent, six derniers mois (chaque barre y emmène), répartition en barre ou en camembert |
+| Accueil | le reste à dépenser, la jauge par enveloppe (pastille à initiale), le repère de rythme et la projection de fin de mois ; tri « mon ordre » ou « plus entamées » |
+| Dépenses | les mouvements du mois, jour par jour ; la recherche ratisse **tout l'historique** et totalise ce qu'elle trouve ; **Filtres** par période (30 jours, 3 mois, année, tout, dates) et par montant ; **Sélectionner** pour modifier (enveloppe, date) ou supprimer plusieurs lignes d'un coup |
+| Bilan | comparaison au mois précédent, six derniers mois (le total au-dessus de chaque barre, chaque barre y emmène), répartition en barre ou en camembert |
 | Récurrent | calendrier des échéances du mois, revenus récurrents, dépenses récurrentes |
-| Réglages | thème, export / import, lien du raccourci Apple, tout effacer |
+| Réglages | (engrenage de la barre du haut) thème, export / import, lien du raccourci Apple, tout effacer ; la carte d'installation disparaît une fois l'appli installée |
 
-Le bouton **+** note une dépense ou un revenu ponctuel. En modification, **Dupliquer** rouvre le même montant, la même enveloppe et le même libellé à la date du jour — pour la dépense qui revient sans être assez régulière pour mériter une règle. Le mode **Gérer** de l'accueil sert à créer, modifier et **réordonner** les enveloppes.
+L'enveloppe **Évitable** (achats d'impulsion, livraisons…) fait partie des enveloppes par défaut ; une sauvegarde plus ancienne la reçoit une seule fois à l'ouverture (50 €/mois, modifiable), et le Bilan chiffre sa part du mois (« dont évitable … »).
+
+Le bouton **+**, au centre de la barre d'onglets, note une dépense ou un revenu ponctuel. Toute suppression (mouvement, sélection, enveloppe, règle récurrente, « Tout effacer ») propose **Annuler** pendant sept secondes : on ne remet que ce qui a été retiré, sans toucher à ce qui a été noté entre-temps. En modification, **Dupliquer** rouvre le même montant, la même enveloppe et le même libellé à la date du jour — pour la dépense qui revient sans être assez régulière pour mériter une règle. Le mode **Gérer** de l'accueil sert à créer, modifier et **réordonner** les enveloppes.
 
 ## Les échéances récurrentes
 
@@ -121,7 +123,7 @@ design/chartes.html   les quatre directions proposées au départ (état d'origi
 ## Tests
 
 ```bash
-npm test          # régressions : 107 vérifications, sortie non nulle si l'une casse
+npm test          # régressions : 140 vérifications, sortie non nulle si l'une casse
 npm run audit     # audit de mise en page : débordements, texte coupé, cibles tactiles
 ```
 
@@ -182,6 +184,8 @@ donc les chiffres de tête qui sortent du champ, et on lit 345,67 là où 12 345
 est saisi. Le champ rétrécit sa fonte plutôt que de rogner.
 
 ## Après une modification de `web/`
+
+Tiroirs et clavier : sur iPhone, quand le clavier monte, seule la fenêtre *visible* (`visualViewport`) rétrécit ; `fitSheetsToViewport()` remonte donc le tiroir d'autant (variables CSS `--kb` et `--vvh`). Sans cela, un tiroir en `bottom:0` reste derrière le clavier.
 
 Trois valeurs à faire monter ensemble : `version` dans `package.json`, `APP_VERSION` en tête de `web/app.js`, et `CACHE` dans `web/sw.js`. C'est `CACHE` qui compte vraiment : sans changement, les appareils qui ont déjà installé l'appli continuent de servir l'ancienne version depuis leur cache.
 

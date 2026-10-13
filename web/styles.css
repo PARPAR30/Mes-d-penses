@@ -127,8 +127,9 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 /* barre du haut : collée, en verre, le contenu défile dessous */
 .topbar{
   position:sticky; top:0; z-index:12;
-  display:flex; align-items:center; justify-content:space-between; gap:10px;
-  padding:calc(12px + env(safe-area-inset-top)) 20px 10px;
+  display:flex; align-items:center; justify-content:space-between; gap:6px;
+  /* à gauche, la place de l'engrenage (40 + 6) : le titre reste centré sur l'écran */
+  padding:calc(12px + env(safe-area-inset-top)) 14px 10px 60px;
   background:var(--glass);
   -webkit-backdrop-filter:blur(22px) saturate(180%);
   backdrop-filter:blur(22px) saturate(180%);
@@ -143,16 +144,19 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
    26 ou 32 px, ce qui se rate au pouce en marchant. La ou l'agrandissement
    visuel abimerait la mise en page (fleches de mois, « Gerer », pastilles de
    couleur), on garde le dessin et on elargit la seule zone d'appui, invisible. */
-.month-nav{
+.month-nav,.gear{
   width:40px; height:40px; border-radius:var(--r-field); display:grid; place-items:center;
   border:1px solid var(--line); background:var(--card); flex:none; position:relative;
 }
-.month-nav::before{content:""; position:absolute; inset:-4px}
-.month-nav:active{background:var(--field)}
-.month-nav svg{width:17px; height:17px; fill:none; stroke:var(--ink); stroke-width:2; stroke-linecap:round; stroke-linejoin:round}
+.month-nav::before,.gear::before{content:""; position:absolute; inset:-4px}
+.month-nav:active,.gear:active{background:var(--field)}
+.month-nav svg,.gear svg{width:17px; height:17px; fill:none; stroke:var(--ink); stroke-width:2; stroke-linecap:round; stroke-linejoin:round}
 /* en Réglages il n'y a pas de mois à parcourir : on garde la place des
    flèches pour que le titre reste au même endroit d'une vue à l'autre */
 .topbar.no-nav .month-nav{visibility:hidden}
+.gear.on{background:var(--dark); border-color:var(--dark)}
+.gear.on svg{stroke:var(--on-dark)}
+.month-year{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 
 .views{flex:1; padding:0 16px}
 .view{display:flex; flex-direction:column; gap:12px; padding-bottom:150px}
@@ -184,6 +188,8 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 .total-note{margin:10px 0 0; font-size:11.5px; color:var(--ink-2)}
 .total-pace{margin:5px 0 0; font-size:11.5px; color:var(--ink-2); font-variant-numeric:tabular-nums}
 .total-pace.is-over{color:var(--danger)}
+.total-note.is-evitable{color:var(--ink)}
+.total-note.is-evitable::before{content:""; display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--c,#D6497E); margin-right:6px}
 
 /* entrées / sorties / solde du mois : trois chiffres côte à côte,
    affichés seulement s'il y a au moins un revenu à comparer */
@@ -199,6 +205,7 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 /* ============ titres de section ============ */
 .section-head{display:flex; align-items:baseline; justify-content:space-between; margin-top:6px}
 .section-head.tight{align-items:center}
+.head-actions{display:flex; align-items:baseline; gap:14px}
 .section-head h2{
   font-size:11.5px; font-weight:600; color:var(--ink-2);
   text-transform:uppercase; letter-spacing:.08em;
@@ -228,12 +235,17 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   padding:12px 14px 13px;
 }
 .env:active{background:var(--field)}
-.env-head{display:flex; align-items:center; gap:9px}
-.env-dot{width:9px; height:9px; border-radius:2px; background:var(--c); flex:none}
+.env-head{display:flex; align-items:center; gap:9px; width:100%; min-width:0}
+/* pastille d'enveloppe : couleur + initiale (la couleur seule ne suffit pas à distinguer deux teintes proches) */
+.env-dot,.tx-dot,.legend-dot{
+  width:22px; height:22px; border-radius:7px; background:var(--c); color:var(--on,#fff);
+  display:grid; place-items:center; flex:none;
+  font-size:11px; font-weight:700; line-height:1; letter-spacing:0;
+}
 .env-n{flex:1; min-width:0; font-size:14px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .env-a{font-size:14px; font-weight:600; font-variant-numeric:tabular-nums}
 .env.is-over .env-a{color:var(--danger)}
-.env-foot{display:flex; align-items:center; justify-content:space-between; gap:10px}
+.env-foot{display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-width:0}
 .env-sub{font-size:11.5px; color:var(--ink-2)}
 .env-p{font-size:11.5px; color:var(--ink-2); font-variant-numeric:tabular-nums}
 .env.is-over .env-p{color:var(--danger)}
@@ -276,7 +288,6 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   background:var(--card); border:1px solid var(--line); border-radius:var(--r-env); padding:11px 14px;
 }
 .tx:active{background:var(--field)}
-.tx-dot{width:9px; height:9px; border-radius:2px; background:var(--c); flex:none}
 .tx-t{flex:1; min-width:0}
 .tx-t b{display:block; font-size:13.5px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .tx-t span{font-size:11.5px; color:var(--ink-2)}
@@ -323,6 +334,8 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 .empty{text-align:center; padding:40px 20px; color:var(--ink-2)}
 .empty b{display:block; font-size:15px; font-weight:600; color:var(--ink); margin-bottom:5px}
 .empty span{font-size:13px}
+/* déjà dans une carte (16 px de marge) : 40 px de plus faisaient un grand vide */
+.card .empty{padding:14px 8px}
 
 /* ============ récurrent : calendrier ============
    Point rond rouge = dépense, point losange vert = revenu. Deux formes
@@ -389,16 +402,25 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 }
 /* Chaque mois est un bouton sur toute la hauteur de la zone : la barre dessinee
    peut ne faire que trois pixels, la cible reste de 88 px. */
-.hist{display:flex; align-items:flex-end; gap:7px; height:88px}
-.hist button{flex:1; height:100%; display:flex; align-items:flex-end; padding:0}
+.hist{display:flex; align-items:flex-end; gap:7px; height:106px; padding-top:18px}
+.hist button{flex:1; height:100%; display:flex; align-items:flex-end; padding:0; position:relative}
+/* le total, posé juste au-dessus de sa barre (--h est la hauteur de celle-ci) */
+.hist-v{
+  position:absolute; left:0; right:0; bottom:calc(var(--h,3%) + 4px);
+  text-align:center; font-size:10px; line-height:1; color:var(--ink-2);
+  font-variant-numeric:tabular-nums; white-space:nowrap; pointer-events:none;
+}
+.hist button.on .hist-v{color:var(--ink); font-weight:700}
+/* un mois vide n'est plus un filet invisible : trait franc et tiret à la place du total */
+.hist button.is-empty::after{background:var(--line)}
 .hist button::after{
   content:""; width:100%; height:var(--h,3%); min-height:3px;
-  background:var(--field); border-radius:var(--r-bar) var(--r-bar) 0 0;
+  background:var(--line-strong); border-radius:var(--r-bar) var(--r-bar) 0 0;
   transition:background .15s ease;
 }
 .hist button.on::after{background:var(--dark)}
-@media (hover:hover){ .hist button:hover::after{background:var(--line-strong)} }
-.hist button:active::after{background:var(--line-strong)}
+@media (hover:hover){ .hist button:hover::after{background:var(--ink-3)} }
+.hist button:active::after{background:var(--ink-3)}
 .hist-days{display:flex; gap:7px}
 .hist-days span{
   flex:1; text-align:center; font-size:10px; color:var(--ink-2);
@@ -440,8 +462,7 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 }
 .legend-row:last-child{border-bottom:0}
 .legend-row.on{background:var(--field)}
-.legend-dot{width:9px; height:9px; border-radius:2px; background:var(--c); flex:none}
-.legend-dot.is-other{background:var(--ink-3)}
+.legend-dot.is-other{background:var(--ink-3); color:#fff}
 .legend-n{flex:1; min-width:0; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .legend-v{font-size:13px; font-weight:600; font-variant-numeric:tabular-nums}
 .legend-p{width:40px; text-align:right; font-size:11.5px; color:var(--ink-2); font-variant-numeric:tabular-nums}
@@ -468,6 +489,53 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 }
 .btn:active{background:var(--field)}
 .btn-danger{color:var(--danger); margin-top:2px; width:100%}
+.btn:disabled{opacity:.4; cursor:default}
+.btn-sm{flex:none; padding:9px 14px; min-height:40px; font-size:12.5px}
+.btn.on{border-color:var(--ink)}
+.toolbar{display:flex; gap:8px; margin-top:6px}
+.toolbar .btn{flex:1; display:flex; align-items:center; justify-content:center; gap:8px}
+.count{
+  min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--dark); color:var(--on-dark);
+  display:inline-grid; place-items:center; font-size:11px; font-weight:700; line-height:1;
+}
+.filters{margin-top:2px; gap:10px}
+.chips{display:flex; flex-wrap:wrap; gap:6px}
+.chips button{
+  padding:9px 12px; min-height:40px; border-radius:var(--r-pill);
+  border:1px solid var(--line); background:var(--card); font-size:12.5px; color:var(--ink-2);
+}
+.chips button.on{border-color:var(--ink); box-shadow:inset 0 0 0 1px var(--ink); color:var(--ink); font-weight:500}
+.range{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+.filters .field input{background:var(--field)}
+.filters .link-btn{align-self:flex-start; padding-left:0}
+.filters .link-btn::before{inset:-9px -9px -9px -9px}
+
+/* mode sélection : case à gauche de chaque ligne */
+.tx-check{
+  width:22px; height:22px; border-radius:50%; border:1.5px solid var(--ink-3); flex:none;
+  display:grid; place-items:center;
+}
+.tx.is-picked{border-color:var(--ink); box-shadow:inset 0 0 0 1px var(--ink)}
+.tx.is-picked .tx-check{background:var(--dark); border-color:var(--dark)}
+.tx.is-picked .tx-check::after{
+  content:""; width:5px; height:9px; margin-top:-2px; border:solid var(--on-dark); border-width:0 2px 2px 0; transform:rotate(45deg);
+}
+
+/* barre d'actions du mode sélection : prend la place de la barre d'onglets */
+.bulkbar{
+  position:fixed; z-index:20; left:50%; transform:translateX(-50%);
+  bottom:calc(10px + env(safe-area-inset-bottom));
+  width:min(480px,calc(100% - 24px));
+  display:flex; flex-direction:column; gap:8px; padding:10px 12px 12px;
+  border-radius:22px; background:var(--glass); border:1px solid var(--glass-edge);
+  -webkit-backdrop-filter:blur(26px) saturate(190%); backdrop-filter:blur(26px) saturate(190%);
+  box-shadow:var(--glass-shadow), inset 0 1px 0 var(--glass-hi);
+}
+:root[data-standalone="0"] .bulkbar{bottom:calc(18px + env(safe-area-inset-bottom))}
+.bulk-top{display:flex; align-items:center; justify-content:space-between; gap:10px}
+.bulk-count{margin:0; font-size:13px; font-weight:600}
+.bulk-actions{display:flex; gap:8px}
+.bulk-actions .btn{flex:1; padding:11px 8px; min-height:44px; margin:0; width:auto}
 /* seuls boutons pleine largeur poses directement dans un <form> en colonne :
    sans width, flex:1 les laisserait a la taille de leur texte */
 #tx-duplicate{width:100%; margin-top:2px}
@@ -552,18 +620,23 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 .tabbar button.on{color:var(--ink); font-weight:600}
 .tabbar button.on svg{stroke-width:2}
 
-.fab{
-  position:fixed; z-index:21; right:max(18px,calc(50% - 236px));
-  bottom:calc(84px + env(safe-area-inset-bottom));
-  width:52px; height:52px; border-radius:17px;
+/* « + » au centre de la barre : il ne flotte plus au-dessus du contenu, donc
+   ne recouvre plus aucun montant */
+.tabbar .fab{
+  flex:none; width:52px; align-self:center; padding:0; margin:0 4px;
+  height:44px; border-radius:15px;
   background:var(--dark); color:var(--on-dark);
-  display:grid; place-items:center;
-  box-shadow:var(--glass-shadow);
-  transition:transform .12s ease;
+  align-items:center; justify-content:center; gap:0;
+  box-shadow:0 6px 14px -8px rgba(18,22,30,.7);
 }
-:root[data-standalone="0"] .fab{bottom:calc(92px + env(safe-area-inset-bottom))}
-.fab:active{transform:scale(.92)}
-.fab svg{width:23px; height:23px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round}
+.tabbar .fab svg{width:23px; height:23px; stroke-width:2.2}
+.tabbar .fab:active{transform:scale(.92)}
+
+/* estompe le bas de page : on voit que la liste continue sous la barre */
+.fade-bottom{
+  position:fixed; z-index:15; left:0; right:0; bottom:0; height:120px; pointer-events:none;
+  background:linear-gradient(to bottom, transparent, var(--bg) 85%);
+}
 
 /* ============ feuilles ============ */
 .scrim{
@@ -579,7 +652,7 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
    de défiler derrière le tiroir ouvert. */
 .scrim.show{opacity:1; pointer-events:auto; touch-action:none}
 .sheet{
-  position:fixed; z-index:31; left:0; right:0; bottom:0;
+  position:fixed; z-index:31; left:0; right:0; bottom:var(--kb,0px);
   max-width:520px; margin:0 auto;
   background:var(--sheet-glass);
   -webkit-backdrop-filter:blur(30px) saturate(180%);
@@ -589,7 +662,7 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   padding:0 18px calc(22px + env(safe-area-inset-bottom));
   box-shadow:var(--sheet-shadow);
   transform:translateY(100%); transition:transform .26s cubic-bezier(.2,.8,.25,1);
-  max-height:92vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
+  max-height:92vh; max-height:min(92dvh, calc(var(--vvh,100dvh) - 10px)); overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
 }
 .sheet.show{transform:translateY(0)}
 .sheet form{display:flex; flex-direction:column; gap:13px}
@@ -598,7 +671,14 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   width:36px; height:4px; border-radius:2px; background:var(--line-strong);
   margin:8px auto 0; flex:none;
 }
-.sheet-head{display:flex; align-items:center; gap:12px; padding:8px 0 2px}
+/* sur un petit écran le tiroir défile : sans cette collure, « OK » et la croix
+   partaient avec le haut du formulaire et il fallait remonter pour valider */
+.sheet-head{
+  display:flex; align-items:center; gap:12px; padding:8px 0 6px;
+  position:sticky; top:0; z-index:2;
+  background:var(--sheet-glass);
+  -webkit-backdrop-filter:blur(20px); backdrop-filter:blur(20px);
+}
 .sheet-head h2{flex:1; text-align:center; font-size:14px; font-weight:600}
 .sheet-close{
   width:36px; height:36px; border-radius:var(--r-bar); background:var(--field);
@@ -643,7 +723,11 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   border:1px solid var(--line); background:var(--card);
   font-size:12.5px; display:flex; align-items:center; gap:7px;
 }
-.env-picker button::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--c)}
+.env-picker button::before{
+  content:attr(data-i); width:18px; height:18px; border-radius:6px; background:var(--c); color:var(--on,#fff);
+  display:grid; place-items:center; font-size:10.5px; font-weight:700; line-height:1; flex:none;
+}
+.env-picker button.is-keep::before{display:none}
 /* état choisi : un filet doublé, plus lisible qu'un simple changement
    de bordure, sans revenir à l'aplat de couleur */
 .env-picker button.on{border-color:var(--ink); box-shadow:inset 0 0 0 1px var(--ink); font-weight:500}
@@ -664,7 +748,7 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   position:fixed; z-index:39; left:50%; transform:translate(-50%,12px);
   /* au-dessus du bouton + (qui monte a 136 px du bas), sinon le bandeau
      le recouvre juste au moment ou l'on veut noter une depense */
-  bottom:calc(148px + env(safe-area-inset-bottom));
+  bottom:calc(112px + env(safe-area-inset-bottom));
   width:min(460px,calc(100% - 32px));
   display:flex; align-items:center; gap:10px;
   background:var(--card); border:1px solid var(--line-strong);
@@ -688,6 +772,13 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
   max-width:calc(100% - 36px); text-align:center;
 }
 .toast.show{opacity:1; transform:translate(-50%,0)}
+.toast.has-action{pointer-events:auto; display:flex; align-items:center; gap:14px; padding-right:8px}
+.toast-action{
+  flex:none; padding:8px 12px; min-height:36px; border-radius:7px; position:relative;
+  font-size:12.5px; font-weight:700; color:inherit;
+  border:1px solid currentColor;
+}
+.toast-action::before{content:""; position:absolute; inset:-4px}
 
 @media (prefers-reduced-motion:reduce){
   *{transition:none !important; animation:none !important}

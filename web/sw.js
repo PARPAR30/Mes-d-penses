@@ -1,7 +1,7 @@
 /* Service worker : met l'appli en cache pour qu'elle démarre sans connexion.
    Changer CACHE à chaque version force le rafraîchissement des fichiers. */
 
-const CACHE = "mon-budget-1.8.1";
+const CACHE = "mon-budget-1.10.0";
 
 const ASSETS = [
   "./",

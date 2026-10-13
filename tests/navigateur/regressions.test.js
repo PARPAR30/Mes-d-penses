@@ -32,7 +32,7 @@ function check(name, ok, detail) {
 const HELPERS = `
 window.q = (s) => document.querySelector(s);
 window.qa = (s) => [...document.querySelectorAll(s)];
-window.go = (v) => { const b = q('.tabbar [data-view="' + v + '"]'); if (b) b.click(); };
+window.go = (v) => { const b = q('[data-view="' + v + '"]'); if (b) b.click(); };
 window.wait = (ms) => new Promise((r) => setTimeout(r, ms || 260));
 window.stored = () => JSON.parse(localStorage.getItem("mon-budget/v1") || "null");
 window.vis = (el) => {
@@ -55,7 +55,7 @@ window.baseData = (over) => Object.assign({
     { id: "e3", ordre: 2, nom: "Transports", couleur: "#23a26d", budget: 15000 },
   ],
   expenses: [], incomes: [], recurring: [],
-  settings: { theme: "auto", chart: "barre" }, updatedAt: Date.now(),
+  settings: { theme: "auto", chart: "barre", evitable: true }, updatedAt: Date.now(),
 }, over || {});
 `;
 
@@ -195,7 +195,7 @@ async function boot(page, dataExpr) {
     ],
     incomes: null,
     recurring: [{ id: "r1", libelle: "sans type", montant: 500, jour: 99, actif: true, envelopeId: "e1" }],
-    settings: { theme: "violet", chart: "spirale" },
+    settings: { theme: "violet", chart: "spirale", evitable: true },
     updatedAt: Date.now(),
   })`);
   const repaired = await evalOn(page, `
@@ -554,6 +554,147 @@ async function boot(page, dataExpr) {
   check("l'enveloppe nommee est preselectionnee", shortcut.enveloppe === "Courses", shortcut);
   check("l'adresse est nettoyee", shortcut.urlNettoyee === true, shortcut);
   check("rien n'est enregistre sans validation", shortcut.enregistre === 0, shortcut);
+
+  // ------------------------------------------------ catégorie « Évitable »
+  console.log("\nCatégorie Évitable");
+  // sauvegarde antérieure à 1.9 : pas de drapeau « evitable »
+  await boot(page, `baseData({ settings: { theme: "auto", chart: "barre" } })`);
+  const ajoutee = await evalOn(page, `await wait(300); const d = stored();
+    return { noms: d.envelopes.map((e) => e.nom), budget: (d.envelopes.find((e) => e.nom === "Évitable") || {}).budget,
+             drapeau: d.settings.evitable, message: q("#toast").textContent };`);
+  check("une ancienne sauvegarde recoit « Évitable »", ajoutee.noms.includes("Évitable") && ajoutee.budget === 5000, ajoutee);
+  check("une seule fois, drapeau pose", ajoutee.noms.filter((n) => n === "Évitable").length === 1 && ajoutee.drapeau === true, ajoutee);
+  check("et le dit", /vitable/.test(ajoutee.message), ajoutee.message);
+  // supprimée par l'utilisateur, elle ne revient pas
+  await evalOn(page, `const d = stored(); d.envelopes = d.envelopes.filter((e) => e.nom !== "Évitable");
+    localStorage.setItem("mon-budget/v1", JSON.stringify(d)); return 1;`);
+  await navigateAndWait(page, URL_APP, READY);
+  const revenue = await evalOn(page, `return stored().envelopes.some((e) => e.nom === "Évitable");`);
+  check("supprimée, elle ne revient pas", revenue === false, revenue);
+  // le bilan chiffre la part évitable
+  await boot(page, `baseData({ envelopes: baseData().envelopes.concat([{ id: "e9", ordre: 3, nom: "Évitable", couleur: "#d6497e", budget: 5000 }]),
+    expenses: [{ id: "a1", montant: 7500, libelle: "Pain", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 },
+               { id: "a2", montant: 2500, libelle: "Impulsion", date: mkey(0) + "-03", envelopeId: "e9", createdAt: 2 }] })`);
+  const bilan = await evalOn(page, `go("bilan"); await wait(260);
+    return { visible: vis(q("#bilan-evitable")), texte: q("#bilan-evitable").textContent };`);
+  check("le bilan chiffre l'évitable", bilan.visible && /25,00/.test(bilan.texte) && /25 %/.test(bilan.texte), bilan);
+
+  // ------------------------------------------------ v1.10 : sélection, filtres, annulation
+  console.log("\nSélection, filtres, annulation");
+  const depenses10 = `baseData({
+    expenses: [
+      { id: "a1", montant: 1000, libelle: "Pain", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 },
+      { id: "a2", montant: 5000, libelle: "Essence", date: mkey(0) + "-03", envelopeId: "e3", createdAt: 2 },
+      { id: "a3", montant: 9000, libelle: "Resto", date: mkey(0) + "-04", envelopeId: "e2", createdAt: 3 },
+      { id: "a4", montant: 20000, libelle: "Vieux", date: mkey(-2) + "-10", envelopeId: "e1", createdAt: 4 },
+    ] })`;
+  await boot(page, depenses10);
+
+  // le + vit dans la barre d'onglets
+  const barre = await evalOn(page, `go("accueil"); await wait(200);
+    return { dansBarre: Boolean(q("#fab").closest(".tabbar")), reglagesHaut: Boolean(q(".topbar [data-view=reglages]")),
+             reglagesBas: Boolean(q(".tabbar [data-view=reglages]")), onglets: qa(".tabbar [data-view]").length };`);
+  check("le + est dans la barre d'onglets", barre.dansBarre, barre);
+  check("Réglages est dans la barre du haut", barre.reglagesHaut && !barre.reglagesBas && barre.onglets === 4, barre);
+
+  // pastilles à initiale
+  const pastilles = await evalOn(page, `go("depenses"); await wait(220);
+    return qa("#tx-list .tx-dot").map((d) => d.textContent);`);
+  check("chaque ligne porte l'initiale de son enveloppe", pastilles.join("") === "CTC", pastilles);
+
+  // filtre par montant
+  const montant = await evalOn(page, `q("#filters-toggle").click(); await wait(120);
+    const min = q("#amount-min"); min.value = "40"; min.dispatchEvent(new Event("input", { bubbles: true })); await wait(120);
+    const avecMin = qa("#tx-list .tx").length;
+    const max = q("#amount-max"); max.value = "60"; max.dispatchEvent(new Event("input", { bubbles: true })); await wait(120);
+    const fenetre = qa("#tx-list .tx").length;
+    const recap = q("#tx-sum").hidden ? null : q("#tx-sum").textContent;
+    const compte = q("#filters-count").textContent;
+    q("#filters-reset").click(); await wait(120);
+    return { avecMin, fenetre, recap, compte, apres: qa("#tx-list .tx").length, min: q("#amount-min").value };`);
+  check("un montant minimum filtre", montant.avecMin === 2, montant);
+  check("min + max bornent la fenêtre", montant.fenetre === 1, montant);
+  check("le récapitulatif suit les filtres", /1 mouvement/.test(montant.recap || "") && /50,00/.test(montant.recap || ""), montant);
+  check("le bouton compte les filtres actifs", montant.compte === "2", montant);
+  check("Réinitialiser remet tout à plat", montant.apres === 3 && montant.min === "", montant);
+
+  // filtre par période
+  const periode = await evalOn(page, `q('[data-period="tout"]').click(); await wait(150);
+    const tout = qa("#tx-list .tx").length;
+    q('[data-period="3m"]').click(); await wait(150);
+    const troisMois = qa("#tx-list .tx").length;
+    q('[data-period="30j"]').click(); await wait(150);
+    const trente = qa("#tx-list .tx").length;
+    q("#filters-reset").click(); await wait(120);
+    return { tout, troisMois, trente };`);
+  check("« Tout » remonte l'historique", periode.tout === 4, periode);
+  check("« 3 mois » inclut le mois d'il y a 2 mois", periode.troisMois === 4, periode);
+  check("« 30 jours » ne garde que le récent", periode.trente >= 1 && periode.trente <= 3, periode);
+
+  // sélection + modification groupée
+  const groupe = await evalOn(page, `q("#filters-toggle").click(); await wait(100);
+    q("#select-toggle").click(); await wait(200);
+    const barreVisible = vis(q("#bulkbar")) && !vis(q("#tabbar"));
+    const lignes = qa("#tx-list .tx"); lignes[0].click(); await wait(80); qa("#tx-list .tx")[1].click(); await wait(80);
+    const compte = q("#bulk-count").textContent;
+    q("#bulk-edit").click(); await wait(340);
+    const feuille = q("#sheet-bulk").classList.contains("show");
+    q('#bulk-env-picker [data-pick="e1"]').click(); await wait(80);
+    q("#bulk-form").dispatchEvent(new Event("submit", { cancelable: true })); await wait(340);
+    const apres = stored().expenses.filter((t) => t.envelopeId === "e1").length;
+    return { barreVisible, compte, feuille, apres, quitte: !q("#bulkbar").hidden === false && vis(q("#tabbar")) };`);
+  check("la sélection remplace la barre d'onglets", groupe.barreVisible, groupe);
+  check("le compteur dit 2 sélectionnés", /2 sélectionné/.test(groupe.compte), groupe);
+  check("Modifier ouvre le tiroir groupé", groupe.feuille === true, groupe);
+  check("l'enveloppe est changée sur toute la sélection", groupe.apres === 3, groupe);
+  check("on sort du mode sélection", groupe.quitte, groupe);
+
+  // annuler la modification, puis suppression groupée annulable
+  const annule = await evalOn(page, `q(".toast-action").click(); await wait(150);
+    const revenu = stored().expenses.filter((t) => t.envelopeId === "e1").length;
+    q("#select-toggle").click(); await wait(150);
+    q("#bulk-all").click(); await wait(100);
+    const tous = q("#bulk-count").textContent;
+    const del = q("#bulk-delete"); del.click(); await wait(80);
+    const question = del.textContent; del.click(); await wait(260);
+    const restant = stored().expenses.length;
+    const offre = q(".toast-action") ? q(".toast-action").textContent : null;
+    q(".toast-action").click(); await wait(200);
+    return { revenu, tous, question, restant, offre, rendu: stored().expenses.length };`);
+  check("Annuler remet les enveloppes d'origine", annule.revenu === 1, annule);
+  check("« Tout sélectionner » prend les 3 lignes du mois", /3 sélectionné/.test(annule.tous), annule);
+  check("la suppression groupée demande confirmation", /\?/.test(annule.question), annule);
+  check("elle supprime…", annule.restant === 1, annule);
+  check("…en proposant Annuler", annule.offre === "Annuler", annule);
+  check("Annuler rend les 3 mouvements", annule.rendu === 4, annule);
+
+  // annuler une suppression simple
+  const simple = await evalOn(page, `go("depenses"); await wait(200);
+    q('#tx-list .tx').click(); await wait(340);
+    const del = q("#tx-delete"); del.click(); await wait(60); del.click(); await wait(340);
+    const apres = stored().expenses.length;
+    q(".toast-action").click(); await wait(200);
+    return { apres, retour: stored().expenses.length };`);
+  check("supprimer une dépense propose Annuler", simple.apres === 3, simple);
+  check("Annuler la rend", simple.retour === 4, simple);
+
+  // tri « plus entamées »
+  await boot(page, `baseData({ expenses: [
+      { id: "b1", montant: 2000, libelle: "x", date: mkey(0) + "-02", envelopeId: "e3", createdAt: 1 },
+      { id: "b2", montant: 1000, libelle: "y", date: mkey(0) + "-03", envelopeId: "e1", createdAt: 2 } ] })`);
+  const tri = await evalOn(page, `go("accueil"); await wait(200);
+    const avant = qa("#env-list .env-n").map((e) => e.textContent);
+    q("#toggle-sort").click(); await wait(150);
+    const apres = qa("#env-list .env-n").map((e) => e.textContent);
+    return { avant, apres, memoire: stored().settings.envSort };`);
+  check("l'ordre de départ est le sien", tri.avant[0] === "Logement", tri);
+  check("« Plus entamées » remonte Transports (13 %) devant Logement (1 %)", tri.apres[0] === "Transports", tri);
+  check("le choix est retenu", tri.memoire === "entame", tri);
+
+  // graphique des mois : un total par barre
+  const mois = await evalOn(page, `go("bilan"); await wait(240);
+    return qa("#hist .hist-v").map((e) => e.textContent);`);
+  check("chaque mois affiche son total (ou un tiret)", mois.length === 6 && mois[5] !== "–" && mois[0] === "–", mois);
 
   // ------------------------------------------------ aucune exception
   const real = [...new Set(errors)];
