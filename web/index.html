@@ -58,7 +58,7 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
     </button>
     <button class="gear" id="open-settings" type="button" data-view="reglages" aria-label="Réglages">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h7M15 7.5h5M4 16.5h4M12 16.5h8"/><circle cx="13" cy="7.5" r="2.2"/><circle cx="10" cy="16.5" r="2.2"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
   </header>
 
@@ -261,6 +261,8 @@
         </div>
         <input type="file" id="import-file" accept="application/json,.json" hidden>
         <p class="setting-stat" id="data-stat"></p>
+        <p class="setting-stat" id="backup-stat"></p>
+        <p class="setting-stat" id="persist-stat"></p>
         <button class="btn btn-danger" id="reset-btn" type="button">Tout effacer</button>
       </div>
 
@@ -441,6 +443,21 @@
     </div>
     <div class="month-grid" id="month-grid" role="group" aria-label="Mois"></div>
     <button class="btn" id="month-today" type="button">Revenir à aujourd'hui</button>
+  </div>
+</div>
+
+<!-- ======== feuille : confirmer un import ======== -->
+<div class="sheet" id="sheet-import" hidden role="dialog" aria-modal="true" aria-labelledby="import-title">
+  <div class="sheet-grip" aria-hidden="true"></div>
+  <div class="sheet-body">
+    <div class="sheet-head">
+      <button class="sheet-close" type="button" data-close aria-label="Fermer">✕</button>
+      <h2 id="import-title">Remplacer tes données ?</h2>
+      <span class="sheet-spacer" aria-hidden="true"></span>
+    </div>
+    <p class="setting-note" id="import-note"></p>
+    <button class="btn btn-danger" id="import-confirm" type="button">Remplacer mes données</button>
+    <button class="btn" type="button" data-close>Garder mes données</button>
   </div>
 </div>
 

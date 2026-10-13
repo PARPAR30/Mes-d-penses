@@ -1005,6 +1005,139 @@ async function boot(page, dataExpr) {
   check("les flèches parcourent un groupe radio", clavier.type === "revenu", clavier);
   check("« Hier » règle la date", clavier.date === clavier.attendu, clavier);
 
+  // ------------------------------------------------ bloc 1 : données protégées
+  console.log("\nÉchéances supprimées, import, export, contrastes");
+  await boot(page, `baseData({ recurring: [{ id: "rs", type: "depense", montant: 50000, libelle: "Loyer", jour: 1, actif: true, icone: null, envelopeId: "e1", debut: mkey(0), createdAt: 1 }] })`);
+  const ignoree = await evalOn(page, `await wait(300);
+    const avant = stored().expenses.length;
+    go("depenses"); await wait(220);
+    qa("#tx-list .tx")[0].click(); await wait(340);
+    const del = q("#tx-delete"); del.click(); await wait(60); del.click(); await wait(340);
+    const apres = stored().expenses.length;
+    const note = q("#toast").textContent;
+    const retenu = stored().recurring[0].skipped.slice();
+    return { avant, apres, note, retenu };`);
+  await navigateAndWait(page, URL_APP, READY);
+  const reouverte = await evalOn(page, `await wait(300); return { expenses: stored().expenses.length, skipped: stored().recurring[0].skipped };`);
+  check("supprimer l'occurrence du mois la supprime vraiment", ignoree.avant === 1 && ignoree.apres === 0, ignoree);
+  check("le message dit qu'elle ne reviendra pas", /ne reviendra pas/.test(ignoree.note), ignoree);
+  check("à la réouverture, elle n'est pas recréée", reouverte.expenses === 0 && reouverte.skipped.length === 1, reouverte);
+  const rendue = await evalOn(page, `
+    state.data.recurring[0].skipped = []; save();
+    const items = generateRecurring();
+    const recree = stored().expenses.length;
+    // annuler la suppression retire aussi le mois ignoré
+    const rec = stored().expenses[0];
+    const skip = skipStamped([rec]); const retenu = state.data.recurring[0].skipped.length; skip.undo();
+    return { recree, retenu, apresUndo: state.data.recurring[0].skipped.length };`);
+  check("sans mois ignoré, la règle recrée l'échéance", rendue.recree === 1, rendue);
+  check("Annuler rend le mois à la règle", rendue.retenu === 1 && rendue.apresUndo === 0, rendue);
+
+  // import : confirmation, puis annulation
+  await boot(page, `baseData({ expenses: [{ id: "i1", montant: 1000, libelle: "Avant", date: mkey(0) + "-02", envelopeId: "e2", createdAt: 1 }] })`);
+  const imp = await evalOn(page, `
+    const fichier = JSON.stringify({ version: 1, envelopes: [{ id: "n1", nom: "Nouvelle", couleur: "#3f6de0", budget: 100 }],
+      expenses: [{ id: "n2", montant: 500, libelle: "Importée", date: mkey(0) + "-03", envelopeId: "n1", createdAt: 1 }, { id: "n3", montant: 700, libelle: "Autre", date: mkey(0) + "-04", envelopeId: "n1", createdAt: 2 }], incomes: [], recurring: [] });
+    importData(new File([fichier], "sauvegarde.json")); await wait(400);
+    const demande = q("#sheet-import").classList.contains("show");
+    const note = q("#import-note").textContent;
+    const intactes = stored().expenses.map((t) => t.libelle).join();
+    q("#sheet-import [data-close].btn").click(); await wait(400);
+    const gardees = stored().expenses.map((t) => t.libelle).join();
+    importData(new File([fichier], "sauvegarde.json")); await wait(400);
+    q("#import-confirm").click(); await wait(450);
+    const remplacees = stored().expenses.map((t) => t.libelle).join();
+    q(".toast-action").click(); await wait(250);
+    return { demande, note, intactes, gardees, remplacees, rendues: stored().expenses.map((t) => t.libelle).join() };`);
+  check("un import demande confirmation avant d'écraser", imp.demande && imp.intactes === "Avant", imp);
+  check("la confirmation compare les deux jeux de données", /2 dépenses/.test(imp.note) && /1 dépense/.test(imp.note), imp.note);
+  check("« Garder mes données » n'efface rien", imp.gardees === "Avant", imp);
+  check("« Remplacer » importe…", imp.remplacees === "Autre,Importée" || imp.remplacees === "Importée,Autre", imp);
+  check("…et Annuler rend les données d'avant", imp.rendues === "Avant", imp);
+  const impVide = await evalOn(page, `
+    state.data.expenses = []; state.data.incomes = []; state.data.recurring = []; state.data.goals = []; save();
+    importData(new File([JSON.stringify({ version: 1, envelopes: [], expenses: [{ id: "z", montant: 100, libelle: "Direct", date: mkey(0) + "-02", createdAt: 1 }] })], "x.json")); await wait(400);
+    const sansQuestion = !q("#sheet-import").classList.contains("show");
+    importData(new File(["pas du json"], "mauvais.json")); await wait(300);
+    return { sansQuestion, importe: stored().expenses.length, message: q("#toast").textContent };`);
+  check("sur des données vides, l'import est direct", impVide.sansQuestion && impVide.importe === 1, impVide);
+  check("un fichier illisible est refusé", /illisible/.test(impVide.message), impVide);
+
+  // export : Partager sur iPhone, rappel, stockage persistant
+  await boot(page, `baseData({ expenses: Array.from({ length: 12 }, (_, i) => ({ id: "e" + i, montant: 100, libelle: "L" + i, date: mkey(0) + "-02", envelopeId: "e2", createdAt: i })) })`);
+  const partage = await evalOn(page, `
+    Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", configurable: true });
+    let recu = null;
+    navigator.canShare = () => true;
+    navigator.share = async (d) => { recu = d; };
+    go("reglages"); await wait(220);
+    const avant = q("#backup-stat").textContent;
+    q("#export-btn").click(); await wait(400);
+    const apres = q("#backup-stat").textContent;
+    const res = { avant, apres, nom: recu && recu.files[0].name, type: recu && recu.files[0].type, retenu: Boolean(stored().settings.lastExport) };
+    // fermer la feuille de partage n'est pas un échec
+    navigator.share = async () => { const e = new Error("annulé"); e.name = "AbortError"; throw e; };
+    const telechargements = []; const vraiClic = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () { if (this.download) telechargements.push(this.download); else return vraiClic.call(this); };
+    state.data.settings.lastExport = null; save();
+    q("#export-btn").click(); await wait(400);
+    res.abandon = { telechargements: telechargements.length, retenu: Boolean(stored().settings.lastExport) };
+    // un vrai échec retombe sur le téléchargement
+    navigator.share = async () => { throw new Error("indisponible"); };
+    q("#export-btn").click(); await wait(400);
+    res.secours = { telechargements: telechargements.length, retenu: Boolean(stored().settings.lastExport) };
+    HTMLAnchorElement.prototype.click = vraiClic;
+    return res;`);
+  check("sur iPhone, l'export passe par le menu Partager", /^mon-budget-\d{4}-\d{2}-\d{2}\.json$/.test(partage.nom || "") && partage.type === "application/json", partage);
+  check("la date de dernière sauvegarde est retenue et affichée", partage.retenu && /Jamais/.test(partage.avant) && /Dernière sauvegarde/.test(partage.apres), partage);
+  check("refermer la feuille de partage ne télécharge rien", partage.abandon.telechargements === 0 && partage.abandon.retenu === false, partage);
+  check("un vrai échec retombe sur le téléchargement", partage.secours.telechargements === 1 && partage.secours.retenu === true, partage);
+
+  const rappel = await evalOn(page, `
+    state.data.settings.lastExport = null; state.data.settings.lastReminder = null; save();
+    const premier = maybeRemindBackup();
+    const bouton = q(".toast-action") ? q(".toast-action").textContent : null;
+    const second = maybeRemindBackup();
+    state.data.settings.lastReminder = null; state.data.settings.lastExport = Date.now() - 2 * 86400000; save();
+    const recent = maybeRemindBackup();
+    return { premier, bouton, second, recent };`);
+  check("30 jours sans sauvegarde : un rappel, avec le bouton", rappel.premier === true && rappel.bouton === "Sauvegarder", rappel);
+  check("pas plus d'un rappel par semaine, ni juste après une sauvegarde", rappel.second === false && rappel.recent === false, rappel);
+
+  const persist = await evalOn(page, `
+    Object.defineProperty(navigator, "storage", { value: { persisted: async () => false, persist: async () => true }, configurable: true });
+    requestPersistence(); await wait(200);
+    return { protege: storagePersisted };`);
+  check("l'appli demande un stockage persistant", persist.protege === true, persist);
+
+  // contrastes : texte secondaire lisible dans les deux thèmes
+  const contrastes = await evalOn(page, `
+    const lum = (hex) => { const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((x) => x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+    const out = {};
+    for (const theme of ["light", "dark"]) {
+      document.documentElement.dataset.theme = theme;
+      const css = getComputedStyle(document.documentElement);
+      const v = (n) => css.getPropertyValue(n).trim();
+      out[theme] = {
+        ink2: Math.min(ratio(v("--ink-2"), v("--card")), ratio(v("--ink-2"), v("--bg")), ratio(v("--ink-2"), v("--field"))),
+        ink3: Math.min(ratio(v("--ink-3"), v("--card")), ratio(v("--ink-3"), v("--bg"))),
+        positif: ratio(v("--positive"), v("--card")),
+        danger: ratio(v("--danger"), v("--card")),
+        surPositif: ratio(v("--on-positive"), v("--positive")),
+      };
+    }
+    delete document.documentElement.dataset.theme;
+    const brand = ["#B8820A", "#FF9900", "#FF7900", "#1DB954", "#E50914", "#3F6DE0"].map((c) => [c, onColor(c)]);
+    const meilleur = brand.every(([c, on]) => ratio(on === "#fff" ? "#ffffff" : on, c) >= ratio(on === "#fff" ? INK : "#ffffff", c));
+    return { out, ambre: onColor("#B8820A"), meilleur, positifVar: onColor("var(--positive)") };`);
+  const minimum = (t) => Math.min(t.ink2, t.ink3, t.positif, t.danger, t.surPositif);
+  check("texte secondaire ≥ 4,5:1 en thème clair", minimum(contrastes.out.light) >= 4.5, contrastes.out.light);
+  check("texte secondaire ≥ 4,5:1 en thème sombre", minimum(contrastes.out.dark) >= 4.5, contrastes.out.dark);
+  check("l'encre d'une pastille est celle qui contraste le mieux", contrastes.ambre === "#1B1E24" && contrastes.meilleur && contrastes.positifVar === "var(--on-positive)", contrastes);
+  const engrenage = await evalOn(page, `return { cercles: qa("#open-settings svg circle").length, chemin: q("#open-settings svg path").getAttribute("d").length };`);
+  check("Réglages a une vraie roue dentée, pas des curseurs", engrenage.cercles === 1 && engrenage.chemin > 400, engrenage);
+
   // ------------------------------------------------ aucune exception
   const real = [...new Set(errors)];
   check("aucune exception JavaScript", real.length === 0, real.slice(0, 3));

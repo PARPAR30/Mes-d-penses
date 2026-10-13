@@ -81,6 +81,8 @@ Une règle récurrente est un modèle : elle « tamponne » une vraie dépense (
 
 Un iPhone laissé de côté six semaines sautait autrefois un loyer, et le bilan des mois traversés restait faux pour toujours. Les mois manqués sont donc **rattrapés** à l'ouverture, en remontant jusqu'au champ `debut` de la règle — posé à sa création, remis au mois courant à chaque sortie de pause, pour qu'une pause ne se rattrape pas rétroactivement. Le rattrapage s'arrête à douze mois en arrière : importer une sauvegarde de trois ans ne doit pas faire surgir trente-six loyers d'un coup. Un message dit ce qui a été rattrapé.
 
+Supprimer à la main l'occurrence d'un mois ne la fait **pas** revenir : le mois est retenu dans `rule.skipped` et la règle ne le recrée plus (Annuler le rend). Déplacer une échéance dans un autre mois fait de même pour l'ancien.
+
 ## Mettre en ligne
 
 Le workflow `.github/workflows/pages.yml` publie le dossier `web/` à chaque `push` sur `main`. Une seule chose à faire côté GitHub, une fois : **Settings → Pages → Source : GitHub Actions**.
@@ -111,6 +113,8 @@ Les paquets desktop se construisent sur le PC (ou le Mac), pas sur GitHub : `bui
 
 Tout ce qui entre est **assaini à la lecture** : un budget écrit en toutes lettres retombe à zéro, un jour hors de 1–28 est ramené dedans, une dépense dont l'enveloppe a disparu est gardée sans enveloppe (elle a bien eu lieu) et apparaît sous « Sans enveloppe » dans la répartition, et ce qui n'est pas récupérable est écarté — l'import dit combien. Ce n'est pas du zèle : **une seule dépense sans date suffisait à interrompre tout le rendu**, et l'accueil restait vide pour toujours puisque la même sauvegarde était relue à chaque ouverture.
 
+**Sauvegarde.** Sur iPhone installé, *Exporter* ouvre le menu Partager avec le fichier joint (Fichiers, AirDrop, Mail…) — le téléchargement direct y est peu fiable ; ailleurs, c'est un téléchargement. La date de la dernière sauvegarde s'affiche dans Réglages, et un rappel discret apparaît après 30 jours sans sauvegarde (au plus un par semaine). L'appli demande aussi au système un stockage persistant (`navigator.storage.persist()`). **Importer** compare le fichier aux données actuelles et demande confirmation avant de remplacer ; l'import reste annulable.
+
 Rien n'est envoyé sur Internet — il n'y a aucun serveur. Effacer les données du site dans Safari efface le budget : d'où l'export.
 
 ## Structure
@@ -137,10 +141,14 @@ design/chartes.html   les quatre directions proposées au départ (état d'origi
 .github/workflows/    déploiement du site, build Windows, build macOS
 ```
 
+## Intégration continue
+
+`pages.yml` lance d'abord `npm test` (Node 24 + le Chrome des runners Ubuntu) ; le site n'est déployé que si les tests passent. Une pull request est testée mais ne publie rien.
+
 ## Tests
 
 ```bash
-npm test          # régressions : 197 vérifications, sortie non nulle si l'une casse
+npm test          # régressions : 220 vérifications, sortie non nulle si l'une casse
 npm run audit     # audit de mise en page : débordements, texte coupé, cibles tactiles
 ```
 

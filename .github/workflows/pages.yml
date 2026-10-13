@@ -1,8 +1,9 @@
-name: Déployer le site
+name: Tester puis déployer le site
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -10,13 +11,36 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  deploy:
+  # Les tests pilotent un vrai Chrome (celui des runners Ubuntu) à la taille d'un iPhone.
+  # Rien n'est déployé tant qu'ils ne passent pas : une régression ne part plus en ligne.
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 24 (WebSocket natif, sans dépendance)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Régressions (npm test)
+        run: npm test
+
+      - name: Journal des tests en cas d'échec
+        if: failure()
+        run: ls -la tests/navigateur || true
+
+  deploy:
+    needs: test
+    # une pull request se teste, mais ne publie rien
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: true
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}

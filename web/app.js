@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 
 /* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
    prend la teinte suivante, jamais une couleur tirée au hasard.
@@ -170,15 +170,27 @@ function compactMoney(cents) {
   return `${(k >= 10 ? Math.round(k) : Math.round(k * 10) / 10).toString().replace(".", ",")}\u00a0k€`;
 }
 
-/* Encre lisible sur une couleur d'enveloppe : blanc ou quasi-noir, selon la luminance. */
-function onColor(hex) {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex || "");
-  if (!m) return "#fff";
+/* Luminance relative (WCAG) d'une couleur #rrggbb. */
+function luminance(hex) {
   const [r, g, b] = [0, 2, 4].map((i) => {
-    const c = parseInt(m[1].slice(i, i + 2), 16) / 255;
+    const c = parseInt(hex.slice(1 + i, 3 + i), 16) / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.3 ? "#1B1E24" : "#fff";
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+const INK = "#1B1E24";
+
+/* Encre lisible sur une couleur : celle des deux (blanc ou encre) qui offre le MEILLEUR
+   contraste. Un seuil fixe laissait du blanc sur l'ambre (3,4:1) alors que l'encre y fait 4,9:1.
+   Le vert « positif » change de teinte avec le thème : son encre est une variable CSS. */
+function onColor(hex) {
+  if (hex === "var(--positive)") return "var(--on-positive)";
+  if (!/^#[0-9a-f]{6}$/i.test(hex || "")) return "#fff";
+  const l = luminance(hex);
+  const white = 1.05 / (l + 0.05);
+  const ink = (l + 0.05) / (luminance(INK) + 0.05);
+  return ink > white ? INK : "#fff";
 }
 
 const initialOf = (nom) => (Array.from(nom || "?")[0] || "?").toUpperCase();
@@ -309,6 +321,7 @@ function normalizeData(data) {
 
   data.settings = { theme: "auto", chart: "barre", envSort: "ordre", histMode: "6", ...data.settings };
   if (!["6", "12", "annee"].includes(data.settings.histMode)) data.settings.histMode = "6";
+  for (const k of ["lastExport", "lastReminder"]) if (!Number.isFinite(data.settings[k])) data.settings[k] = null;
   // une sauvegarde qui n'a pas ce champ a déjà servi (ou vient d'un import) : pas d'accueil guidé
   if (typeof data.settings.onboarded !== "boolean") data.settings.onboarded = true;
   if (!["auto", "light", "dark"].includes(data.settings.theme)) data.settings.theme = "auto";
@@ -363,6 +376,8 @@ function normalizeData(data) {
         libelle: typeof r.libelle === "string" && r.libelle.trim() ? r.libelle.trim().slice(0, 60) : "Sans nom",
         actif: r.actif !== false,
         icone: typeof r.icone === "string" ? r.icone : null,
+        // mois que l'utilisateur a supprimés à la main : la règle ne les recrée pas
+        skipped: Array.isArray(r.skipped) ? [...new Set(r.skipped.filter(isMonth))] : [],
         envelopeId: type === "depense" && known.has(r.envelopeId) ? r.envelopeId : null,
         // point de départ du rattrapage : jamais avant la création de la règle
         debut: isMonth(r.debut) ? r.debut : monthOf(isoDay(new Date(r.createdAt || Date.now()))),
@@ -635,6 +650,7 @@ function generateRecurring() {
     if (!rule.actif) continue;
     const target = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
     const done = new Set(target.filter((t) => t.recurringId === rule.id).map((t) => monthOf(t.date)));
+    for (const m of rule.skipped || []) done.add(m);
 
     let month = rule.debut > floor ? rule.debut : floor;
     while (month <= thisMonth) {
@@ -661,6 +677,31 @@ function generateRecurring() {
   if (created) save();
   return { created, backfilled };
 }
+
+/* Supprimer à la main l'occurrence d'un mois ne doit pas la faire revenir : la règle la
+   recréait à chaque ouverture (rien n'y était plus, donc « il manque »). On retient le
+   mois dans `rule.skipped`. Renvoie le nombre de mois retenus et la fonction qui les rend. */
+function skipStamped(movements) {
+  const touched = [];
+  for (const t of movements) {
+    if (!t.recurringId) continue;
+    const rule = state.data.recurring.find((r) => r.id === t.recurringId);
+    if (!rule) continue;
+    rule.skipped ||= [];
+    const m = monthOf(t.date);
+    if (!rule.skipped.includes(m)) {
+      rule.skipped.push(m);
+      touched.push([rule, m]);
+    }
+  }
+  return {
+    count: touched.length,
+    undo: () => {
+      for (const [rule, m] of touched) rule.skipped = rule.skipped.filter((x) => x !== m);
+    },
+  };
+}
+const SKIP_NOTE = " Elle ne reviendra pas ce mois-ci.";
 
 /** Une règle modifiée met à jour l'occurrence DÉJÀ tamponnée du mois en cours (montant,
     libellé, enveloppe, étiquette) : sinon corriger un loyer ne changeait que les mois à venir,
@@ -1708,6 +1749,17 @@ function renderReglages() {
     : "jamais";
   $("#data-stat").textContent =
     `${n} dépense${n > 1 ? "s" : ""} · ${inc} revenu${inc > 1 ? "s" : ""} · ${e} enveloppe${e > 1 ? "s" : ""} · ${r} récurrente${r > 1 ? "s" : ""} · modifié le ${when}`;
+  const last = state.data.settings.lastExport;
+  $("#backup-stat").textContent = last
+    ? `Dernière sauvegarde : ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" }).format(last)} (il y a ${Math.floor((Date.now() - last) / DAY_MS)} jour${Math.floor((Date.now() - last) / DAY_MS) > 1 ? "s" : ""}).`
+    : "Jamais sauvegardé : exporte un fichier pour ne rien perdre.";
+  $("#backup-stat").classList.toggle("is-warn", !last || Date.now() - last > 30 * DAY_MS);
+  $("#persist-stat").textContent =
+    storagePersisted === null
+      ? ""
+      : storagePersisted
+        ? "Stockage protégé contre le nettoyage automatique."
+        : "Stockage non protégé : installe l'appli sur l'écran d'accueil et sauvegarde régulièrement.";
   $("#version").textContent = `Mon Budget ${APP_VERSION}`;
   // déjà installée : la carte d'instructions n'a plus rien à apprendre
   const installed = isStandalone();
@@ -1764,6 +1816,7 @@ function renderUpcoming() {
     const chip = document.createElement("span");
     chip.className = "chip chip-sm";
     chip.style.setProperty("--c", icon.couleur);
+    chip.style.setProperty("--on", onColor(icon.couleur));
     chip.textContent = icon.mono;
     chip.setAttribute("aria-hidden", "true");
     const text = document.createElement("span");
@@ -1895,6 +1948,7 @@ function renderCalendarDay(monthRules) {
     const chip = document.createElement("span");
     chip.className = "chip";
     chip.style.setProperty("--c", icon.couleur);
+    chip.style.setProperty("--on", onColor(icon.couleur));
     chip.textContent = icon.mono;
 
     const text = document.createElement("span");
@@ -1935,6 +1989,7 @@ function renderRecurringList(type, listId, emptyTitle, emptySub) {
     const chip = document.createElement("span");
     chip.className = "chip chip-sm";
     chip.style.setProperty("--c", icon.couleur);
+    chip.style.setProperty("--on", onColor(icon.couleur));
     chip.textContent = icon.mono;
 
     const text = document.createElement("span");
@@ -2330,6 +2385,7 @@ function renderIconPicker() {
     b.dataset.icon = preset.id;
     b.className = "icon-chip";
     b.style.setProperty("--c", preset.couleur ?? "var(--positive)");
+    b.style.setProperty("--on", onColor(preset.couleur ?? "var(--positive)"));
     b.textContent = preset.mono;
     const on = state.draftRecurringIcon === preset.id;
     b.classList.toggle("on", on);
@@ -2506,55 +2562,157 @@ function offerUndo(message, restore) {
 
 /* ---------------------------------------------------------- import / export */
 
-function exportData() {
-  const stamp = todayIso();
+/* Sauvegarde. Les données ne vivent que dans cet appareil : la sauvegarde est la seule
+   assurance. Sur iPhone installé, le téléchargement par <a download> est peu fiable (rien,
+   ou une page JSON blanche) ; le menu Partager (fichier joint) y est le chemin sûr —
+   Enregistrer dans Fichiers, AirDrop, Mail, iCloud Drive. */
+const DAY_MS = 86400000;
+
+function markExported() {
+  state.data.settings.lastExport = Date.now();
+  save();
+  if (state.view === "reglages") renderReglages();
+}
+
+async function exportData() {
   const json = JSON.stringify(state.data, null, 2);
+  const name = `mon-budget-${todayIso()}.json`;
+
+  const touch = isStandalone() || /iPhone|iPad|iPod/.test(navigator.userAgent);
+  if (touch && navigator.share && navigator.canShare) {
+    try {
+      const file = new File([json], name, { type: "application/json" });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "Sauvegarde Mon Budget" });
+        markExported();
+        return toast("Sauvegarde partagée.");
+      }
+    } catch (e) {
+      if (e?.name === "AbortError") return; // l'utilisateur a refermé la feuille : rien à dire, rien à retenter
+      // autre échec : on retombe sur le téléchargement
+    }
+  }
+
   try {
     const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = `mon-budget-${stamp}.json`;
+    a.download = name;
     document.body.append(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    markExported();
     toast("Sauvegarde exportée.");
   } catch {
     navigator.clipboard
       ?.writeText(json)
-      .then(() => toast("Téléchargement bloqué : données copiées dans le presse-papiers."))
+      .then(() => {
+        markExported();
+        toast("Téléchargement bloqué : données copiées dans le presse-papiers.");
+      })
       .catch(() => toast("Export impossible sur cet appareil."));
   }
+}
+
+/** Rappel discret : plus de 30 jours sans sauvegarde, au plus un rappel par semaine. */
+function maybeRemindBackup() {
+  const d = state.data;
+  if (d.expenses.length + d.incomes.length < 10 || needsOnboarding()) return false;
+  const now = Date.now();
+  const last = d.settings.lastExport || 0;
+  if (now - last < 30 * DAY_MS || now - (d.settings.lastReminder || 0) < 7 * DAY_MS) return false;
+  d.settings.lastReminder = now;
+  save();
+  const days = Math.floor((now - last) / DAY_MS);
+  toast(
+    last ? `Dernière sauvegarde il y a ${days} jours.` : "Tes données n'existent que sur cet appareil : pense à les sauvegarder.",
+    { label: "Sauvegarder", run: exportData }
+  );
+  return true;
+}
+
+/** Demande au système de ne pas purger le stockage de l'appli (Safari le fait après sept jours d'inactivité hors installation). */
+let storagePersisted = null;
+function requestPersistence() {
+  const store = navigator.storage;
+  if (!store?.persist) return;
+  Promise.resolve(store.persisted?.())
+    .then((already) => already || store.persist())
+    .then((ok) => {
+      storagePersisted = Boolean(ok);
+      if (state.view === "reglages") renderReglages();
+    })
+    .catch(() => {});
+}
+
+/* ---- import : on lit, on compare, on demande — jamais d'écrasement silencieux ---- */
+let pendingImport = null;
+
+const countOf = (d) => ({
+  depenses: d.expenses.length,
+  revenus: d.incomes.length,
+  enveloppes: d.envelopes.length,
+  recurrentes: d.recurring.length,
+});
+const describeCount = (c) =>
+  `${c.depenses} dépense${c.depenses > 1 ? "s" : ""}, ${c.revenus} revenu${c.revenus > 1 ? "s" : ""}, ${c.enveloppes} enveloppe${c.enveloppes > 1 ? "s" : ""}, ${c.recurrentes} récurrente${c.recurrentes > 1 ? "s" : ""}`;
+
+function applyImport({ candidate, repaired }) {
+  const previous = state.data;
+  state.data = candidate;
+  state.filterEnv = null;
+  state.month = todayIso().slice(0, 7);
+  state.calDay = null;
+  save();
+  generateRecurring();
+  render();
+  // NB : le message d'import prime sur celui du rattrapage — l'utilisateur
+  // vient de faire un geste explicite, c'est de lui qu'on lui parle
+  offerUndo(
+    repaired
+      ? `Importé : ${state.data.expenses.length} dépenses. ${repaired} enregistrement${repaired > 1 ? "s illisibles écartés" : " illisible écarté"}.`
+      : `Importé : ${state.data.expenses.length} dépenses.`,
+    () => {
+      state.data = previous;
+    }
+  );
 }
 
 function importData(file) {
   const reader = new FileReader();
   reader.onload = () => {
+    let candidate;
     try {
       const data = JSON.parse(String(reader.result));
       if (!isSane(data)) throw new Error("format");
-      state.data = normalizeData(data);
-      state.filterEnv = null;
-      state.month = todayIso().slice(0, 7);
-      state.calDay = null;
-      const repaired = lastRepairCount;
-      save();
-      generateRecurring();
-      render();
-      // NB : le message d'import prime sur celui du rattrapage — l'utilisateur
-      // vient de faire un geste explicite, c'est de lui qu'on lui parle
-      toast(
-        repaired
-          ? `Importé : ${state.data.expenses.length} dépenses. ${repaired} enregistrement${repaired > 1 ? "s illisibles écartés" : " illisible écarté"}.`
-          : `Importé : ${state.data.expenses.length} dépenses.`
-      );
+      candidate = normalizeData(data);
     } catch {
-      toast("Fichier illisible : ce n'est pas une sauvegarde Mon Budget.");
+      return toast("Fichier illisible : ce n'est pas une sauvegarde Mon Budget.");
     }
+    const incoming = { candidate, repaired: lastRepairCount };
+    const current = state.data;
+    const empty = !current.expenses.length && !current.incomes.length && !current.recurring.length && !current.goals.length;
+    // rien à perdre : on importe directement (l'annulation reste offerte)
+    if (empty) return applyImport(incoming);
+
+    pendingImport = incoming;
+    $("#import-note").textContent =
+      `Ce fichier contient ${describeCount(countOf(candidate))}. ` +
+      `Tes données actuelles — ${describeCount(countOf(current))} — seront remplacées. ` +
+      `Pense à exporter d'abord si tu veux les garder.`;
+    openSheet("#sheet-import");
   };
   reader.onerror = () => toast("Lecture du fichier impossible.");
   reader.readAsText(file);
 }
+
+$("#import-confirm").addEventListener("click", () => {
+  const incoming = pendingImport;
+  pendingImport = null;
+  closeSheets();
+  if (incoming) applyImport(incoming);
+});
 
 /* ---------------------------------------------------------- événements */
 
@@ -2784,10 +2942,12 @@ function deleteMovement(kind, id) {
   if (!removed) return;
   if (revenu) state.data.incomes = state.data.incomes.filter((t) => t.id !== id);
   else state.data.expenses = state.data.expenses.filter((t) => t.id !== id);
+  const skip = skipStamped([removed]);
   save();
   render();
-  offerUndo(revenu ? "Revenu supprimé." : "Dépense supprimée.", () => {
+  offerUndo((revenu ? "Revenu supprimé." : "Dépense supprimée.") + (skip.count ? SKIP_NOTE : ""), () => {
     (revenu ? state.data.incomes : state.data.expenses).push(removed);
+    skip.undo();
   });
 }
 
@@ -2969,10 +3129,12 @@ $("#bulk-delete").addEventListener("click", (e) => {
     const [dep, rev] = [ids("depense"), ids("revenu")];
     state.data.expenses = state.data.expenses.filter((t) => !dep.has(t.id));
     state.data.incomes = state.data.incomes.filter((t) => !rev.has(t.id));
+    const skip = skipStamped(taken.map((t) => t.item));
     save();
     setSelecting(false);
-    offerUndo(`${taken.length} mouvement${taken.length > 1 ? "s supprimés" : " supprimé"}.`, () => {
+    offerUndo(`${taken.length} mouvement${taken.length > 1 ? "s supprimés" : " supprimé"}.` + (skip.count ? " Les échéances récurrentes ne reviendront pas ce mois-ci." : ""), () => {
       for (const { kind, item } of taken) (kind === "revenu" ? state.data.incomes : state.data.expenses).push(item);
+      skip.undo();
     });
   });
 });
@@ -3142,9 +3304,12 @@ $("#tx-form").addEventListener("submit", (e) => {
   if (state.editingTx) {
     const record = target.find((t) => t.id === state.editingTx);
     const restore = snapshotOf(record);
+    const before = { ...record };
     if (!payload.evitable) delete record.evitable;
     Object.assign(record, payload);
-    undoAfterEdit = [revenu ? "Revenu modifié." : "Dépense modifiée.", restore];
+    // une échéance déplacée dans un autre mois laisse un trou dans l'ancien : la règle ne doit pas le « combler »
+    const skip = monthOf(payload.date) !== monthOf(before.date) ? skipStamped([before]) : { undo() {} };
+    undoAfterEdit = [revenu ? "Revenu modifié." : "Dépense modifiée.", () => { restore(); skip.undo(); }];
   } else {
     target.push({ id: uid(), createdAt: Date.now(), ...payload });
     toast(
@@ -3185,11 +3350,13 @@ $("#tx-delete").addEventListener("click", (e) => {
     const removed = (revenu ? state.data.incomes : state.data.expenses).find((t) => t.id === state.editingTx);
     if (revenu) state.data.incomes = state.data.incomes.filter((t) => t.id !== state.editingTx);
     else state.data.expenses = state.data.expenses.filter((t) => t.id !== state.editingTx);
+    const skip = skipStamped(removed ? [removed] : []);
     save();
     closeSheets();
     render();
-    offerUndo(revenu ? "Revenu supprimé." : "Dépense supprimée.", () => {
+    offerUndo((revenu ? "Revenu supprimé." : "Dépense supprimée.") + (skip.count ? SKIP_NOTE : ""), () => {
       if (removed) (revenu ? state.data.incomes : state.data.expenses).push(removed);
+      skip.undo();
     });
   });
 });
@@ -3466,7 +3633,7 @@ $("#recurring-form").addEventListener("submit", (e) => {
     restoreRule = snapshotOf(previous);
     Object.assign(previous, payload);
     restoreStamp = syncStamped(previous);
-  } else state.data.recurring.push({ id: uid(), createdAt: Date.now(), ...payload });
+  } else state.data.recurring.push({ id: uid(), createdAt: Date.now(), skipped: [], ...payload });
 
   save();
   closeSheets();
@@ -3689,7 +3856,7 @@ $("#ob-go").addEventListener("click", () => {
   if (income) {
     state.data.recurring.push({
       id: uid(), type: "revenu", montant: income, libelle: "Salaire", jour: day, actif: true,
-      icone: "salaire", envelopeId: null, evitable: false,
+      icone: "salaire", envelopeId: null, evitable: false, skipped: [],
       debut: todayIso().slice(0, 7), createdAt: Date.now(),
     });
   }
@@ -3741,6 +3908,8 @@ const startup = generateRecurring();
 if (startup.created) render();
 const caughtUp = backfillMessage(startup);
 if (caughtUp) toast(caughtUp);
+else maybeRemindBackup();
+requestPersistence();
 consumeShortcutLink();
 // les boutons d'onglet ne sont mesurables qu'une fois la mise en page faite
 requestAnimationFrame(positionTabPill);
