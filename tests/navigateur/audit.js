@@ -26,6 +26,7 @@ const DBG = 9361;
 const URL_APP = `http://127.0.0.1:${PORT}/index.html`;
 
 const findings = [];
+const STRICT = process.argv.includes("--strict") || Boolean(process.env.CI);
 const note = (where, what) => {
   findings.push({ where, what });
   console.log(`  !  [${where}] ${what}`);
@@ -237,7 +238,7 @@ async function scan(page, label) {
     { label: "tiroir depense", open: `q("#fab").click();` },
     { label: "tiroir revenu", open: `q("#fab").click(); await new Promise(r=>setTimeout(r,300)); q('#tx-type [data-type="revenu"]').click();` },
     { label: "tiroir enveloppe", open: `go("accueil"); q("#toggle-manage").click(); await new Promise(r=>setTimeout(r,150)); q("#env-add").click();` },
-    { label: "tiroir enveloppe (edition)", open: `go("accueil"); if (!q("#toggle-manage").classList.contains("on")) q("#toggle-manage").click(); await new Promise(r=>setTimeout(r,150)); q('[data-env]').click();` },
+    { label: "tiroir enveloppe (edition)", open: `go("accueil"); if (!q("#toggle-manage").classList.contains("on")) q("#toggle-manage").click(); await new Promise(r=>setTimeout(r,150)); q('#env-list [data-env]').click();` },
     { label: "tiroir recurrent depense", open: `go("recurrent"); await new Promise(r=>setTimeout(r,200)); q("#recurring-add").click();` },
     { label: "tiroir recurrent revenu", open: `go("recurrent"); await new Promise(r=>setTimeout(r,200)); q("#income-add").click();` },
   ];
@@ -316,7 +317,17 @@ async function scan(page, label) {
   }
 
   console.log(`\n${findings.length} anomalie(s).`);
+
+  /* Mode strict (CI) : seules les anomalies INCONNUES font échouer. Les constats acceptés (voir
+     l'en-tête) sont des limites de géométrie ; le balayage « bouton inerte » est indicatif. */
+  const known = (f) => /cal-cell|chart-bar|#hist|bouton inerte/.test(`${f.where} ${f.what}`);
+  const fresh = findings.filter((f) => !known(f));
+  console.log(`dont ${fresh.length} nouvelle(s) (hors constats acceptés).`);
+  if (STRICT && (fresh.length || errors.length)) {
+    for (const f of fresh) console.log(`  ! [${f.where}] ${f.what}`);
+    console.log("\nAudit strict : échec.");
+  }
   proc.kill();
   server.close();
-  process.exit(0);
+  process.exit(STRICT && (fresh.length || errors.length) ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

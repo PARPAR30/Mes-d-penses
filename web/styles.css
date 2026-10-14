@@ -937,3 +937,57 @@ h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
 .trend-t span{display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 
 .setting-stat.is-warn{color:var(--danger)}
+
+/* ---- reste à vivre par jour, avis, récap ---- */
+.total-day{margin:8px 0 0; font-size:.875rem; font-weight:500; line-height:1.4; font-variant-numeric:tabular-nums}
+.notices{display:flex; flex-direction:column; gap:8px}
+.notices:empty{display:none}
+.notice{
+  display:flex; align-items:center; gap:8px; background:var(--card); border:1px solid var(--line);
+  border-radius:var(--r-env); padding:0 6px 0 0;
+}
+.notice.is-warn{border-color:var(--danger)}
+.notice-main{
+  flex:1; min-width:0; display:flex; align-items:center; gap:10px; text-align:left; min-height:44px; padding:5px 8px 5px 10px;
+  font-size:.8125rem; line-height:1.3;
+}
+.notice-main b{display:block; font-weight:600}
+.notice-main span span{color:var(--ink-2); font-size:.75rem}
+.notice-x{
+  width:36px; height:36px; flex:none; border-radius:var(--r-bar); background:var(--field); color:var(--ink-2);
+  font-size:.75rem; position:relative;
+}
+.notice-x::before{content:""; position:absolute; inset:-6px}
+.recap p{margin:0; font-size:.875rem; line-height:1.55}
+.recap p + p{margin-top:8px}
+.recap .field-label{margin-bottom:2px}
+.setting-note.is-warn{color:var(--danger)}
+
+/* ---- division, virements ---- */
+.field select{
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r-field);
+  padding:12px 13px; font-size:1rem; width:100%; min-height:46px; color:var(--ink);
+}
+.split-row{display:flex; align-items:center; gap:8px; margin-bottom:8px}
+.split-row select{flex:1; min-width:0; background:var(--card); border:1px solid var(--line); border-radius:var(--r-field); padding:11px 10px; font-size:1rem; color:var(--ink); min-height:46px}
+.split-row input{width:104px; flex:none; background:var(--field); border:1px solid var(--line); border-radius:var(--r-field); padding:11px 10px; font-size:1rem; text-align:right; font-variant-numeric:tabular-nums}
+.split-row .split-x{width:36px; height:36px; flex:none; border-radius:var(--r-bar); background:var(--field); color:var(--ink-2); font-size:.75rem; position:relative}
+.split-row .split-x::before{content:""; position:absolute; inset:-6px}
+#split-add{margin-top:2px}
+.split-ok{color:var(--positive)}
+.tr-row{display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--line); font-size:.875rem}
+.tr-row span{flex:1; min-width:0}
+.tr-row b{font-variant-numeric:tabular-nums}
+.tr-row button{width:36px; height:36px; flex:none; border-radius:var(--r-bar); background:var(--field); color:var(--ink-2); font-size:.75rem; position:relative}
+.tr-row button::before{content:""; position:absolute; inset:-6px}
+.tx-note{display:block; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.sort-btn{font-size:1rem; letter-spacing:0}
+.sort-btn.on{color:var(--ink); font-weight:700}
+
+.shortcut-steps code, .setting-note code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8em; background:var(--field);
+  padding:1px 5px; border-radius:5px; overflow-wrap:anywhere;
+}
+.shortcut-steps .setting-note{margin-top:8px}
+.shortcut-steps summary{min-height:44px}
+.notices-more{align-self:center; padding:6px 10px}

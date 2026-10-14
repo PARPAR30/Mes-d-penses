@@ -71,6 +71,7 @@
         <p class="total-figure" id="total-figure">0,00 €</p>
         <div class="total-track" id="total-track" role="img" aria-label="Répartition des dépenses par enveloppe"></div>
         <p class="total-note" id="total-note"></p>
+        <p class="total-day" id="total-day" hidden></p>
         <p class="total-pace" id="total-pace" hidden></p>
         <p class="total-pace is-over" id="total-warn" hidden></p>
 
@@ -90,10 +91,13 @@
         </div>
       </div>
 
+      <div class="notices" id="notices" aria-label="À savoir"></div>
+
       <div class="section-head">
         <h2>Mes enveloppes</h2>
         <div class="head-actions">
-          <button class="link-btn" id="toggle-sort" type="button"></button>
+          <button class="link-btn sort-btn" id="toggle-sort" type="button"></button>
+          <button class="link-btn" id="transfer-open" type="button">Virer</button>
           <button class="link-btn" id="toggle-manage" type="button">Gérer</button>
         </div>
       </div>
@@ -159,6 +163,11 @@
         <p class="total-note" id="bilan-compare"></p>
         <p class="total-note" id="bilan-net" hidden></p>
         <p class="total-note is-evitable" id="bilan-evitable" hidden></p>
+      </div>
+
+      <div class="card recap" id="recap" hidden>
+        <p class="field-label">Le mois en trois phrases</p>
+        <div id="recap-text"></div>
       </div>
 
       <div class="section-head tight">
@@ -263,6 +272,10 @@
         <p class="setting-stat" id="data-stat"></p>
         <p class="setting-stat" id="backup-stat"></p>
         <p class="setting-stat" id="persist-stat"></p>
+        <div id="rescue-row" hidden>
+          <p class="setting-note is-warn">Une sauvegarde illisible a été mise de côté lors d'un lancement : tes données n'ont pas été effacées.</p>
+          <button class="btn" id="rescue-btn" type="button">Récupérer la copie illisible</button>
+        </div>
         <button class="btn btn-danger" id="reset-btn" type="button">Tout effacer</button>
       </div>
 
@@ -272,26 +285,60 @@
         <p class="setting-stat" id="install-stat"></p>
       </div>
 
-      <div class="section-head"><h2>Ajout rapide (Raccourcis)</h2></div>
+      <div class="section-head"><h2>Ajout rapide (iPhone)</h2></div>
       <div class="card">
-        <p class="setting-note">Apple ne laisse aucune appli, y compris Raccourcis, détecter un paiement Apple Pay pour se déclencher toute seule. Le plus rapide que permette l'iPhone : un raccourci lancé en un geste (bouton Action, tapotement arrière, ou depuis l'écran d'accueil) qui ouvre directement le tiroir <strong>Nouvelle dépense</strong>, montant déjà rempli si tu le donnes à Raccourcis.</p>
+        <label class="check"><input type="checkbox" id="open-on-add"><span>Ouvrir directement sur « Nouvelle dépense » <small>Le clavier du montant est prêt dès l'ouverture : l'idéal avec le bouton Action, un raccourci « Ouvrir l'app » ou l'icône de l'écran d'accueil.</small></span></label>
+      </div>
 
+      <div class="section-head"><h2>Saisies des Raccourcis</h2></div>
+      <div class="card">
+        <p class="setting-note">Une appli posée sur l'écran d'accueil a son propre stockage, <strong>séparé de Safari</strong> : un lien lancé par Raccourcis s'ouvre dans Safari, pas ici. Le chemin fiable est donc un fichier : le raccourci dépose chaque saisie dans un dossier de Fichiers, et tu les importes ici d'un geste — même plusieurs d'un coup, sans doublon.</p>
+        <div class="btn-row">
+          <button class="btn" id="inbox-btn" type="button">Importer les saisies</button>
+          <button class="btn" id="inbox-copy" type="button">Copier le modèle</button>
+        </div>
+        <input type="file" id="inbox-file" multiple accept=".txt,.csv,.json,text/plain,application/json" hidden>
+        <p class="setting-stat" id="inbox-stat"></p>
+
+        <details class="shortcut-steps">
+          <summary>Apple Pay : saisie automatique (iOS 17 ou plus)</summary>
+          <ol>
+            <li><strong>Raccourcis</strong> → <strong>Automatisation</strong> → <strong>+</strong> → <strong>Transaction</strong>. Choisis ta carte (et, si tu veux, des catégories), puis <strong>Exécuter immédiatement</strong>.</li>
+            <li>Ajoute l'action <strong>Date actuelle</strong>, puis <strong>Formater la date</strong> en <strong>ISO 8601</strong>.</li>
+            <li>Ajoute l'action <strong>Texte</strong> et écris : <code>Montant ; Commerçant ; Date</code>. Touche chaque mot pour le remplacer par sa variable : le <strong>montant</strong> et le <strong>commerçant</strong> de l'<em>entrée du raccourci</em> (la transaction), et la <strong>date formatée</strong>.</li>
+            <li>Ajoute <strong>Enregistrer le fichier</strong> : dossier <strong>iCloud Drive › Mon Budget</strong>, nom = la date formatée + « .txt », <strong>Demander où enregistrer</strong> désactivé.</li>
+            <li>Ici, <strong>Importer les saisies</strong> et sélectionne les fichiers du dossier. L'enveloppe est choisie d'après le commerçant (comme pour la suggestion) ; sinon la dépense attend dans « À classer ».</li>
+          </ol>
+          <p class="setting-note">Les intitulés exacts varient selon la version d'iOS. Des utilisateurs signalent aussi qu'iOS transmet parfois un montant à 0 ou un commerçant vide : ces lignes sont ignorées à l'import, et comptées.</p>
+        </details>
+
+        <details class="shortcut-steps">
+          <summary>Saisie manuelle en un geste</summary>
+          <ol>
+            <li>Nouveau raccourci : <strong>Demander un nombre</strong> (« Montant »), puis <strong>Demander une saisie</strong> (« Libellé »).</li>
+            <li><strong>Texte</strong> : <code>Montant ; Libellé</code>, puis <strong>Enregistrer le fichier</strong> dans le même dossier (nom : <strong>Date actuelle</strong>).</li>
+            <li>Lance-le depuis le <strong>bouton Action</strong>, le <strong>tapotement arrière</strong> (Accessibilité › Toucher) ou l'écran d'accueil.</li>
+          </ol>
+          <p class="setting-note">Pour saisir tout de suite, sans fichier, active plutôt « Ouvrir directement sur Nouvelle dépense » ci-dessus et associe le bouton Action à <strong>Ouvrir l'app</strong> › Mon Budget.</p>
+        </details>
+
+        <details class="shortcut-steps">
+          <summary>Format du fichier</summary>
+          <p class="setting-note">Une saisie par ligne : <code>montant ; libellé ; date ; enveloppe</code>. Seuls le montant et le libellé sont obligatoires. La date est ISO (<code>2026-10-14T18:32:10+02:00</code>) ou <code>14/10/2026</code>. Les lignes vides et celles qui commencent par <code>#</code> sont ignorées. Un objet JSON (<code>{"montant":"12,50","libelle":"Monoprix"}</code>) est aussi accepté. Une même saisie importée deux fois n'est comptée qu'une fois.</p>
+        </details>
+      </div>
+
+      <div class="section-head"><h2>Lien web (Safari, ordinateur)</h2></div>
+      <div class="card">
+        <p class="setting-note">Pour le site ouvert <strong>dans Safari</strong> ou sur ordinateur (pas dans l'appli installée). Le lien ouvre « Nouvelle dépense » prérempli. Ajoute <code>&amp;enregistrer=1</code> pour noter sans confirmation (annulable) quand l'enveloppe est connue.</p>
         <div class="linkbox" id="shortcut-linkbox" hidden>
-          <input type="text" id="shortcut-link" readonly aria-label="Lien du raccourci, à compléter par le montant">
+          <input type="text" id="shortcut-link" readonly aria-label="Lien à compléter par le montant">
           <button class="btn" id="shortcut-copy" type="button">Copier</button>
         </div>
         <p class="setting-note" id="shortcut-unavailable" hidden>Ce lien ne fonctionne que depuis le site en ligne : ouvre Mon Budget via son adresse http(s), pas en fichier local, pour l'obtenir.</p>
-
         <details class="shortcut-steps">
-          <summary>Créer le raccourci (2 minutes)</summary>
-          <ol>
-            <li>Ouvrir l'app <strong>Raccourcis</strong> → <strong>+</strong>.</li>
-            <li>Ajouter l'action <strong>Demander un nombre</strong>, invite « Montant ». Astuce : mets le presse-papiers en valeur par défaut — si tu viens de copier un montant, il sera déjà prérempli.</li>
-            <li>Ajouter l'action <strong>Texte</strong> : coller le lien ci-dessus, puis insérer le nombre demandé juste après.</li>
-            <li>Ajouter l'action <strong>Ouvrir les URL</strong>, branchée sur ce texte.</li>
-            <li>Nommer le raccourci « Dépense » et fermer.</li>
-            <li>Pour le lancer en un geste : Réglages → <strong>Bouton Action</strong>, ou Réglages → Accessibilité → <strong>Tapotement arrière</strong>, ou ajouter le raccourci à l'écran d'accueil.</li>
-          </ol>
+          <summary>Paramètres du lien</summary>
+          <p class="setting-note"><code>ajouter=1</code> (obligatoire) · <code>montant=12,50</code> · <code>libelle=Boulangerie</code> · <code>env=Courses</code> (nom ou identifiant, sans souci d'accent) · <code>type=revenu</code> · <code>date=2026-10-14</code>, <code>hier</code> ou <code>aujourd'hui</code> · <code>note=…</code> · <code>evitable=1</code> · <code>enregistrer=1</code>. Encode l'URL (action Raccourcis « Encoder l'URL ») si le texte contient des espaces ou des « &amp; ».</p>
         </details>
       </div>
 
@@ -369,11 +416,23 @@
       <p class="field-hint" id="env-suggest-hint" hidden></p>
     </div>
 
+    <label class="check" id="split-row"><input type="checkbox" id="tx-split"><span>Répartir sur plusieurs enveloppes <small>(courses + pharmacie dans le même ticket…)</small></span></label>
+    <div id="split-parts" hidden>
+      <div id="split-list"></div>
+      <button type="button" class="btn btn-sm" id="split-add">+ Ajouter une part</button>
+      <p class="field-hint" id="split-left" aria-live="polite"></p>
+    </div>
+    <p class="field-hint" id="split-note" hidden>Cette dépense est une part d'une dépense divisée : tu modifies cette part seulement.</p>
+
     <label class="field">
       <span class="field-label">Libellé</span>
       <input id="tx-label" type="text" autocomplete="off" placeholder="Monoprix, essence, resto…" maxlength="60">
     </label>
     <div class="chips" id="label-suggest" aria-label="Suggestions d'après tes dépenses passées" hidden></div>
+    <label class="field">
+      <span class="field-label">Note (facultatif)</span>
+      <input id="tx-note" type="text" autocomplete="off" placeholder="Pour qui, pourquoi, n° de facture…" maxlength="200">
+    </label>
 
     <label class="field">
       <span class="field-label">Date</span>
@@ -424,6 +483,34 @@
     <div class="color-picker" id="env-colors" role="radiogroup" aria-label="Couleur"></div>
 
     <button class="btn btn-danger" id="env-delete" type="button" hidden>Supprimer cette enveloppe</button>
+  </form>
+</div>
+
+<!-- ======== feuille : virer du budget d'une enveloppe à une autre ======== -->
+<div class="sheet" id="sheet-transfer" hidden role="dialog" aria-modal="true" aria-labelledby="transfer-title">
+  <div class="sheet-grip" aria-hidden="true"></div>
+  <form id="transfer-form" novalidate>
+    <div class="sheet-head">
+      <button class="sheet-close" type="button" data-close aria-label="Fermer">✕</button>
+      <h2 id="transfer-title">Virer du budget</h2>
+      <button class="sheet-save" type="submit">Virer</button>
+    </div>
+    <p class="setting-note" id="transfer-note"></p>
+    <label class="field">
+      <span class="field-label">De</span>
+      <select id="tr-from"></select>
+    </label>
+    <p class="field-hint" id="tr-avail"></p>
+    <label class="field">
+      <span class="field-label">Vers</span>
+      <select id="tr-to"></select>
+    </label>
+    <label class="field">
+      <span class="field-label">Montant</span>
+      <span class="inline-amount"><input id="tr-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="50"><span class="amount-cur">€</span></span>
+    </label>
+    <p class="field-error" id="tr-error" hidden></p>
+    <div id="tr-list"></div>
   </form>
 </div>
 
@@ -489,6 +576,12 @@
       <input id="goal-date" type="month">
     </label>
     <p class="field-hint" id="goal-pace" hidden></p>
+    <p class="field-label">Mise de côté automatique</p>
+    <div class="range">
+      <label class="field"><span class="field-label">Par mois</span><span class="inline-amount"><input id="goal-monthly" type="text" inputmode="decimal" autocomplete="off" placeholder="0"><span class="amount-cur">€</span></span></label>
+      <label class="field"><span class="field-label">Le (jour)</span><input id="goal-day" type="number" inputmode="numeric" min="1" max="31" placeholder="1"></label>
+    </div>
+    <p class="field-hint" id="goal-auto-hint">Compté comme une dépense de l'enveloppe « Épargne » : un virement automatique chaque mois, qui fait avancer l'objectif.</p>
     <div id="goal-deposit-block">
       <p class="field-label">Verser</p>
       <div class="linkbox">
@@ -557,12 +650,30 @@
     </label>
     <p class="field-error" id="recurring-label-error" hidden>Donne un nom.</p>
 
-    <label class="field">
+    <p class="field-label">Fréquence</p>
+    <div class="seg" id="recurring-freq" role="radiogroup" aria-label="Fréquence">
+      <button type="button" data-freq="mensuel" role="radio">Mois</button>
+      <button type="button" data-freq="hebdo" role="radio">Semaine</button>
+      <button type="button" data-freq="trimestre" role="radio">Trimestre</button>
+      <button type="button" data-freq="annuel" role="radio">Année</button>
+    </div>
+
+    <label class="field" id="recurring-day-field">
       <span class="field-label">Jour du mois</span>
       <input id="recurring-day" type="number" inputmode="numeric" min="1" max="31" placeholder="1" required>
       <span class="field-hint">29 à 31 : le dernier jour du mois quand il est plus court.</span>
     </label>
     <p class="field-error" id="recurring-day-error" hidden>Choisis un jour entre 1 et 31.</p>
+    <label class="field" id="recurring-anchor-field" hidden>
+      <span class="field-label" id="recurring-anchor-label">Première échéance</span>
+      <input id="recurring-anchor" type="date">
+    </label>
+    <p class="field-error" id="recurring-anchor-error" hidden>Choisis la date de la première échéance.</p>
+    <label class="field">
+      <span class="field-label">Se termine le (facultatif)</span>
+      <input id="recurring-end" type="date">
+    </label>
+    <label class="check"><input type="checkbox" id="recurring-variable"><span>Montant variable <small>(facture, énergie…) : noté comme estimation, à confirmer</small></span></label>
 
     <label class="check" id="recurring-evitable-row"><input type="checkbox" id="recurring-evitable"><span>Dépense évitable <small>(abonnement dont on pourrait se passer)</small></span></label>
 

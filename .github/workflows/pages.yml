@@ -29,6 +29,9 @@ jobs:
       - name: Régressions (npm test)
         run: npm test
 
+      - name: Audit de mise en page (débordements, cibles tactiles, texte coupé)
+        run: npm run audit
+
       - name: Journal des tests en cas d'échec
         if: failure()
         run: ls -la tests/navigateur || true

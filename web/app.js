@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = "mon-budget/v1";
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 
 /* Palette des enveloppes, dans un ordre fixe : une nouvelle enveloppe
    prend la teinte suivante, jamais une couleur tirée au hasard.
@@ -208,6 +208,17 @@ function badge(className, couleur, text) {
 }
 
 const pad = (n) => String(n).padStart(2, "0");
+
+/* Définis ICI, avant le chargement des données : normalizeData() les lit, et la lecture
+   se fait à la création de `state`. Une `const` déclarée plus bas est inaccessible à ce
+   moment-là : l'exception était avalée par load(), qui repartait d'une sauvegarde VIDE. */
+const daysIn = (month) => new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+const FREQS = {
+  mensuel: { step: 1, label: "Chaque mois" },
+  hebdo: { step: 0, label: "Chaque semaine" },
+  trimestre: { step: 3, label: "Tous les 3 mois" },
+  annuel: { step: 12, label: "Chaque année" },
+};
 const isoDay = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const monthOf = (isoDate) => isoDate.slice(0, 7);
 const todayIso = () => isoDay(new Date());
@@ -257,6 +268,7 @@ function seed() {
     incomes: [],
     recurring: [],
     goals: [],
+    transfers: [],
     settings: { theme: "auto", chart: "barre", envSort: "ordre", histMode: "6", onboarded: false },
     updatedAt: Date.now(),
   };
@@ -309,6 +321,12 @@ function cleanMovement(t, drop) {
     libelle: typeof t.libelle === "string" ? t.libelle.slice(0, 60) : "",
     createdAt: Number.isFinite(t.createdAt) ? t.createdAt : 0,
     ...(t.evitable === true ? { evitable: true } : {}),
+    ...(t.estime === true ? { estime: true } : {}),
+    ...(typeof t.note === "string" && t.note.trim() ? { note: t.note.trim().slice(0, 200) } : {}),
+    ...(typeof t.splitId === "string" && t.splitId ? { splitId: t.splitId } : {}),
+    ...(typeof t.goalId === "string" && t.goalId ? { goalId: t.goalId } : {}),
+    ...(t.via === "raccourci" ? { via: "raccourci" } : {}),
+    ...(typeof t.src === "string" && t.src ? { src: t.src.slice(0, 200) } : {}),
   };
 }
 
@@ -322,6 +340,10 @@ function normalizeData(data) {
   data.settings = { theme: "auto", chart: "barre", envSort: "ordre", histMode: "6", ...data.settings };
   if (!["6", "12", "annee"].includes(data.settings.histMode)) data.settings.histMode = "6";
   for (const k of ["lastExport", "lastReminder"]) if (!Number.isFinite(data.settings[k])) data.settings[k] = null;
+  data.settings.openOnAdd = data.settings.openOnAdd === true;
+  data.settings.lastInbox = data.settings.lastInbox && Number.isFinite(data.settings.lastInbox.at) ? { at: data.settings.lastInbox.at, n: Math.max(0, Math.round(data.settings.lastInbox.n) || 0) } : null;
+  data.settings.dismissed = Array.isArray(data.settings.dismissed) ? data.settings.dismissed.filter((k) => typeof k === "string").slice(-80) : [];
+  if (!isMonth(data.settings.recapSeen)) data.settings.recapSeen = null;
   // une sauvegarde qui n'a pas ce champ a déjà servi (ou vient d'un import) : pas d'accueil guidé
   if (typeof data.settings.onboarded !== "boolean") data.settings.onboarded = true;
   if (!["auto", "light", "dark"].includes(data.settings.theme)) data.settings.theme = "auto";
@@ -341,6 +363,7 @@ function normalizeData(data) {
         report: e.report === true,
         reportDepuis: isMonth(e.reportDepuis) ? e.reportDepuis : null,
         archivee: e.archivee === true,
+        auto: e.auto === true, // créée par l'appli pour les objectifs d'épargne : son budget la suit
         couleur: /^#[0-9a-f]{6}$/i.test(e.couleur) ? e.couleur : COLORS[i % COLORS.length],
         ordre: Number.isFinite(e.ordre) ? e.ordre : i,
       };
@@ -376,8 +399,13 @@ function normalizeData(data) {
         libelle: typeof r.libelle === "string" && r.libelle.trim() ? r.libelle.trim().slice(0, 60) : "Sans nom",
         actif: r.actif !== false,
         icone: typeof r.icone === "string" ? r.icone : null,
-        // mois que l'utilisateur a supprimés à la main : la règle ne les recrée pas
-        skipped: Array.isArray(r.skipped) ? [...new Set(r.skipped.filter(isMonth))] : [],
+        // périodes que l'utilisateur a supprimées à la main : la règle ne les recrée pas
+        // (un mois « YYYY-MM », ou une date « YYYY-MM-DD » pour une règle hebdomadaire)
+        skipped: Array.isArray(r.skipped) ? [...new Set(r.skipped.filter((k) => isMonth(k) || isIsoDate(k)))] : [],
+        freq: FREQS[r.freq] ? r.freq : "mensuel",
+        ancre: isIsoDate(r.ancre) ? r.ancre : null,
+        fin: isIsoDate(r.fin) ? r.fin : null,
+        variable: r.variable === true,
         envelopeId: type === "depense" && known.has(r.envelopeId) ? r.envelopeId : null,
         // point de départ du rattrapage : jamais avant la création de la règle
         debut: isMonth(r.debut) ? r.debut : monthOf(isoDay(new Date(r.createdAt || Date.now()))),
@@ -385,6 +413,12 @@ function normalizeData(data) {
       };
     })
     .filter(keep)
+    // hors « chaque mois », il faut une date de référence (jour de la semaine, mois d'ancrage)
+    .map((r) => {
+      if (r.freq !== "mensuel" && !r.ancre) r.ancre = `${r.debut}-${pad(Math.min(r.jour, daysIn(r.debut)))}`;
+      if (r.freq === "mensuel") r.ancre = null;
+      return r;
+    })
     // une règle de dépense sans enveloppe valide ne sait plus où imputer : elle est écartée
     .filter((r) => {
       if (r.type === "revenu" || r.envelopeId) return true;
@@ -403,8 +437,18 @@ function normalizeData(data) {
         cible,
         epargne: Math.max(0, Math.round(Number.isFinite(g.epargne) ? g.epargne : 0)),
         echeance: isMonth(g.echeance) ? g.echeance : null,
+        mensuel: cleanCents(g.mensuel) ?? 0,
+        jour: Math.min(31, Math.max(1, Number.parseInt(g.jour, 10) || 1)),
         createdAt: Number.isFinite(g.createdAt) ? g.createdAt : 0,
       };
+    })
+    .filter(keep);
+
+  data.transfers = (Array.isArray(data.transfers) ? data.transfers : [])
+    .map((x) => {
+      const montant = cleanCents(x?.montant);
+      if (montant === null || !isMonth(x.month) || !known.has(x.from) || !known.has(x.to) || x.from === x.to) return drop();
+      return { id: typeof x.id === "string" && x.id ? x.id : uid(), month: x.month, from: x.from, to: x.to, montant, createdAt: Number.isFinite(x.createdAt) ? x.createdAt : 0 };
     })
     .filter(keep);
 
@@ -413,14 +457,29 @@ function normalizeData(data) {
   return data;
 }
 
+/* Si la lecture échoue (fichier tronqué, bug de migration…), on ne repart pas d'une sauvegarde
+   vide EN SILENCE : la prochaine écriture écraserait les vraies données. La copie brute est
+   mise de côté, et Réglages permet de la récupérer. */
+const RESCUE_KEY = `${STORE_KEY}/illisible`;
+let loadRescued = false;
+
 function load() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    raw = localStorage.getItem(STORE_KEY);
     if (!raw) return seed();
     const data = JSON.parse(raw);
-    if (!isSane(data)) return seed();
+    if (!isSane(data)) throw new Error("format");
     return normalizeData(data);
   } catch {
+    if (raw) {
+      try {
+        localStorage.setItem(RESCUE_KEY, raw);
+        loadRescued = true;
+      } catch {
+        /* mémoire pleine : tant pis, la copie reste sous la clé d'origine jusqu'à la prochaine écriture */
+      }
+    }
     return seed();
   }
 }
@@ -444,6 +503,8 @@ const state = {
   month: todayIso().slice(0, 7),
   view: "accueil",
   filterEnv: null,
+  noticesAll: false,
+  filterSpecial: null, // "classer" (sans enveloppe) | "confirmer" (montants estimés)
   query: "",
   focusSlice: null,
   focusSticky: false,
@@ -480,6 +541,7 @@ const state = {
   draftRecurringActive: true,
   draftRecurringType: "depense",
   draftRecurringIcon: null,
+  draftRecurringFreq: "mensuel",
 };
 
 /* ---------------------------------------------------------- sélecteurs */
@@ -533,6 +595,19 @@ function setBudgetFrom(env, month, cents) {
   env.budget = budgetFor(env, todayIso().slice(0, 7));
 }
 
+/** Solde des virements de budget reçus/émis par une enveloppe pour un mois. */
+function transferNet(envId, month) {
+  let net = 0;
+  for (const t of state.data.transfers || []) {
+    if (t.month !== month) continue;
+    if (t.to === envId) net += t.montant;
+    if (t.from === envId) net -= t.montant;
+  }
+  return net;
+}
+/** Budget d'un mois : le montant prévu, corrigé des virements faits entre enveloppes CE mois-là. */
+const monthBudget = (env, month) => budgetFor(env, month) + transferNet(env.id, month);
+
 /** Dépensé par mois puis par enveloppe, sur tout l'historique — calculé une fois par révision. */
 let spentCache = { rev: -1, data: null, table: null };
 function spentTable() {
@@ -555,14 +630,14 @@ function carryIn(env, month) {
   let carry = 0;
   let m = env.reportDepuis;
   for (let i = 0; m < month && i < MAX_CARRY_MONTHS; i++) {
-    carry = Math.max(0, budgetFor(env, m) + carry - (table[m]?.[env.id] || 0));
+    carry = Math.max(0, monthBudget(env, m) + carry - (table[m]?.[env.id] || 0));
     m = shiftMonth(m, 1);
   }
   return carry;
 }
 
 /** Ce dont l'enveloppe dispose ce mois-là : son budget + le report. */
-const budgetOf = (env, month) => budgetFor(env, month) + carryIn(env, month);
+const budgetOf = (env, month) => monthBudget(env, month) + carryIn(env, month);
 
 /** Enveloppes à montrer pour un mois : les actives, plus les archivées qui y ont encore des dépenses. */
 function envelopesFor(month) {
@@ -578,7 +653,6 @@ const isAvoidable = (t) => t.evitable === true || isAvoidableEnv(envById(t.envel
 const avoidableSpent = (month) => expensesOf(month).filter(isAvoidable).reduce((n, t) => n + t.montant, 0);
 
 /* ---- jour d'échéance : au-delà de la fin du mois, c'est le dernier jour ---- */
-const daysIn = (month) => new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
 const effDay = (rule, month) => Math.min(rule.jour, daysIn(month));
 const totalSpent = (month) => expensesOf(month).reduce((sum, t) => sum + t.montant, 0);
 const totalIncome = (month) => incomesOf(month).reduce((sum, t) => sum + t.montant, 0);
@@ -590,15 +664,25 @@ function daysLeft(month) {
   return new Date(y, m, 0).getDate() - now.getDate();
 }
 
-/** Part fixe du mois : ce qui vient d'une règle récurrente — déjà tamponné, ou
-    encore à tomber d'ici la fin du mois. Elle est due, pas « au rythme de ». */
-function fixedSpend(month) {
+/** Part fixe du mois : ce qui vient d'une règle récurrente — déjà tamponné, ou encore à
+    tomber d'ici la fin du mois. Elle est due, pas « au rythme de ». */
+function fixedParts(month) {
   const stamped = expensesOf(month).filter((t) => t.recurringId);
-  const done = new Set(stamped.map((t) => t.recurringId));
-  let total = stamped.reduce((n, t) => n + t.montant, 0);
-  for (const rule of recurringRules("depense")) if (rule.actif && !done.has(rule.id)) total += rule.montant;
-  return total;
+  let coming = 0;
+  for (const rule of recurringRules("depense")) {
+    if (!rule.actif) continue;
+    const done = new Set(stamped.filter((t) => t.recurringId === rule.id).map((t) => ruleKey(rule, t.date)));
+    for (const k of rule.skipped || []) done.add(k);
+    for (const occ of occurrences(rule, `${month}-01`, `${month}-${pad(daysIn(month))}`)) {
+      if (!done.has(occ.key)) coming += rule.montant;
+    }
+  }
+  return { stamped: stamped.reduce((n, t) => n + t.montant, 0), coming };
 }
+const fixedSpend = (month) => {
+  const { stamped, coming } = fixedParts(month);
+  return stamped + coming;
+};
 
 /* Où en est le mois, et où en serait la dépense si elle continuait au même
    rythme. « Il te reste 300 € » ne dit pas si c'est confortable ou si tout va
@@ -639,39 +723,98 @@ function recurringRules(type) {
 
 /** Tamponne toutes les échéances dues et pas encore générées.
     @returns {{created:number, backfilled:number}} total créé, dont mois passés. */
+/* ---- fréquences ----
+   mensuel : un jour du mois ; hebdo : un jour de la semaine ; trimestre / annuel : un jour
+   précis, tous les 3 / 12 mois à partir de `ancre`. Une « occurrence » a une date et une
+   clé (le mois, ou la date pour l'hebdomadaire) qui sert à savoir si elle est déjà tombée. */
+const isoToDate = (iso) => new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+const monthIndex = (key) => Number(key.slice(0, 4)) * 12 + Number(key.slice(5, 7)) - 1;
+const ruleKey = (rule, date) => ((rule.freq || "mensuel") === "hebdo" ? date : monthOf(date));
+
+/** Dates d'une règle entre deux dates ISO incluses ({date, key}), fin de règle comprise. */
+function occurrences(rule, fromIso, toIso) {
+  const out = [];
+  const freq = rule.freq || "mensuel";
+  const last = rule.fin && rule.fin < toIso ? rule.fin : toIso;
+  if (fromIso > last) return out;
+
+  if (freq === "hebdo") {
+    const weekday = isoToDate(rule.ancre || fromIso).getDay();
+    const d = isoToDate(fromIso);
+    while (d.getDay() !== weekday) d.setDate(d.getDate() + 1);
+    for (; isoDay(d) <= last; d.setDate(d.getDate() + 7)) {
+      const iso = isoDay(d);
+      if (!rule.ancre || iso >= rule.ancre) out.push({ date: iso, key: iso });
+    }
+    return out;
+  }
+
+  const step = FREQS[freq].step;
+  const anchorMonth = rule.ancre ? rule.ancre.slice(0, 7) : null;
+  const day = rule.ancre ? Number(rule.ancre.slice(8, 10)) : rule.jour;
+  for (let m = fromIso.slice(0, 7); m <= last.slice(0, 7); m = shiftMonth(m, 1)) {
+    if (anchorMonth && m < anchorMonth) continue;
+    if (step > 1 && (((monthIndex(m) - monthIndex(anchorMonth)) % step) + step) % step !== 0) continue;
+    const date = `${m}-${pad(Math.min(day, daysIn(m)))}`;
+    if (date >= fromIso && date <= last) out.push({ date, key: m });
+  }
+  return out;
+}
+
+/** Équivalent mensuel d'un montant récurrent (pour « charges fixes par mois »). */
+function monthlyEquivalent(rule) {
+  const f = rule.freq || "mensuel";
+  return f === "hebdo" ? Math.round((rule.montant * 52) / 12) : Math.round(rule.montant / (FREQS[f].step || 1));
+}
+
+const WEEKDAYS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+
+/** « le 15 », « chaque lundi », « tous les 3 mois, le 15 », « chaque année le 15 mars ». */
+function freqText(rule) {
+  const f = rule.freq || "mensuel";
+  const day = rule.ancre ? Number(rule.ancre.slice(8, 10)) : rule.jour;
+  if (f === "hebdo") return `chaque ${WEEKDAYS[isoToDate(rule.ancre).getDay()]}`;
+  if (f === "trimestre") return `tous les 3 mois, le ${day}`;
+  if (f === "annuel") return `chaque année le ${day} ${monthName(rule.ancre.slice(0, 7)).toLowerCase()}`;
+  return day > 28 ? `le ${day} (ou fin de mois)` : `le ${day}`;
+}
+
+/** Tamponne toutes les échéances dues et pas encore générées.
+    @returns {{created:number, backfilled:number}} total créé, dont mois passés. */
 function generateRecurring() {
-  const thisMonth = todayIso().slice(0, 7);
-  const today = new Date().getDate();
-  const floor = shiftMonth(thisMonth, -MAX_BACKFILL);
+  const today = todayIso();
+  const thisMonth = today.slice(0, 7);
+  const floorMonth = shiftMonth(thisMonth, -MAX_BACKFILL);
   let created = 0;
   let backfilled = 0;
 
   for (const rule of recurringRules()) {
     if (!rule.actif) continue;
     const target = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
-    const done = new Set(target.filter((t) => t.recurringId === rule.id).map((t) => monthOf(t.date)));
-    for (const m of rule.skipped || []) done.add(m);
+    const done = new Set(target.filter((t) => t.recurringId === rule.id).map((t) => ruleKey(rule, t.date)));
+    for (const k of rule.skipped || []) done.add(k);
 
-    let month = rule.debut > floor ? rule.debut : floor;
-    while (month <= thisMonth) {
-      // le mois en cours n'est dû qu'une fois le jour atteint ; les mois passés le sont tous
-      const due = month < thisMonth || today >= effDay(rule, month);
-      if (due && !done.has(month)) {
-        const record = {
-          id: uid(),
-          montant: rule.montant,
-          libelle: rule.libelle,
-          date: `${month}-${pad(effDay(rule, month))}`,
-          recurringId: rule.id,
-          createdAt: Date.now(),
-          ...(rule.evitable ? { evitable: true } : {}),
-        };
-        if (rule.type === "revenu") state.data.incomes.push(record);
-        else state.data.expenses.push({ ...record, envelopeId: rule.envelopeId });
-        created++;
-        if (month < thisMonth) backfilled++;
-      }
-      month = shiftMonth(month, 1);
+    // jamais avant la création de la règle ni plus d'un an en arrière ; ni avant sa date de référence
+    let from = `${rule.debut > floorMonth ? rule.debut : floorMonth}-01`;
+    if (rule.ancre && rule.ancre > from) from = rule.ancre;
+
+    for (const occ of occurrences(rule, from, today)) {
+      if (done.has(occ.key)) continue;
+      const record = {
+        id: uid(),
+        montant: rule.montant,
+        libelle: rule.libelle,
+        date: occ.date,
+        recurringId: rule.id,
+        createdAt: Date.now(),
+        ...(rule.evitable ? { evitable: true } : {}),
+        ...(rule.variable ? { estime: true } : {}),
+        ...(rule.goalId ? { goalId: rule.goalId } : {}),
+      };
+      if (rule.type === "revenu") state.data.incomes.push(record);
+      else state.data.expenses.push({ ...record, envelopeId: rule.envelopeId });
+      created++;
+      if (monthOf(occ.date) < thisMonth) backfilled++;
     }
   }
   if (created) save();
@@ -688,7 +831,7 @@ function skipStamped(movements) {
     const rule = state.data.recurring.find((r) => r.id === t.recurringId);
     if (!rule) continue;
     rule.skipped ||= [];
-    const m = monthOf(t.date);
+    const m = ruleKey(rule, t.date);
     if (!rule.skipped.includes(m)) {
       rule.skipped.push(m);
       touched.push([rule, m]);
@@ -709,14 +852,19 @@ const SKIP_NOTE = " Elle ne reviendra pas ce mois-ci.";
 function syncStamped(rule) {
   const month = todayIso().slice(0, 7);
   const list = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
-  const rec = list.find((t) => t.recurringId === rule.id && monthOf(t.date) === month);
+  const mine = list.filter((t) => t.recurringId === rule.id && monthOf(t.date) === month).sort((a, b) => b.date.localeCompare(a.date));
+  const rec = mine[0]; // hebdomadaire : la plus récente du mois seulement
   if (!rec) return () => {};
   const restore = snapshotOf(rec);
   rec.montant = rule.montant;
   rec.libelle = rule.libelle;
-  // la date ne passe jamais dans le futur : une échéance déjà tombée ne se « re-pose » pas
-  const day = effDay(rule, month);
-  if (day <= new Date().getDate()) rec.date = `${month}-${pad(day)}`;
+  // seule une règle mensuelle déplace sa date, et jamais dans le futur : une échéance déjà tombée ne se « re-pose » pas
+  if ((rule.freq || "mensuel") === "mensuel") {
+    const day = effDay(rule, month);
+    if (day <= new Date().getDate()) rec.date = `${month}-${pad(day)}`;
+  }
+  if (rule.variable) rec.estime = true;
+  else delete rec.estime;
   if (rule.type === "depense") {
     rec.envelopeId = rule.envelopeId;
     if (rule.evitable) rec.evitable = true;
@@ -860,6 +1008,24 @@ function renderAccueil() {
   if (overPromised)
     warn.textContent = `Tes budgets (${money(budget)}) dépassent tes revenus du mois (${money(incomeNow)}) de ${money(budget - incomeNow)}.`;
 
+  /* « Il te reste 556 € » ne dit pas quoi faire demain matin. Le même reste, ramené au nombre de
+     jours restants (aujourd'hui compris) et diminué des charges fixes pas encore tombées — le
+     loyer du 5 est déjà dans « il te reste » tant qu'il n'est pas prélevé. */
+  const dayLine = $("#total-day");
+  const daysToGo = pace.total - new Date().getDate() + 1;
+  const comingFixed = pace.current ? fixedParts(state.month).coming : 0;
+  dayLine.hidden = !(pace.current && budget > 0 && left > 0);
+  if (!dayLine.hidden) {
+    const free = left - comingFixed;
+    dayLine.textContent =
+      free <= 0
+        ? `Le reste est déjà promis aux charges fixes à venir (${money(comingFixed)}).`
+        : daysToGo <= 1
+          ? `Il te reste ${money(free)} pour aujourd'hui.`
+          : `Tu peux dépenser ${Math.floor(free / daysToGo / 100)} € par jour jusqu'à la fin du mois` +
+            (comingFixed ? ` (après ${money(comingFixed)} de charges fixes à venir).` : ".");
+  }
+
   // sans revenu saisi, la ligne n'afficherait que des zéros : on ne la
   // montre qu'à partir du premier revenu du mois
   const income = totalIncome(state.month);
@@ -876,6 +1042,7 @@ function renderAccueil() {
 
   $("#toggle-manage").textContent = state.managing ? "Terminé" : "Gérer";
   $("#toggle-manage").classList.toggle("on", state.managing);
+  $("#transfer-open").hidden = state.managing;
 
   /* Tri « plus entamées » : les enveloppes les plus proches de la limite (ou
      déjà dépassées) remontent en tête — c'est là qu'il y a quelque chose à
@@ -887,7 +1054,10 @@ function renderAccueil() {
   if (byUse) shown.sort((a, b) => use(b) - use(a));
   const sortBtn = $("#toggle-sort");
   sortBtn.hidden = state.managing;
-  sortBtn.textContent = byUse ? "↓ Plus entamées" : "↓ Mon ordre";
+  sortBtn.textContent = "⇅";
+  sortBtn.classList.toggle("on", byUse);
+  sortBtn.setAttribute("aria-pressed", String(byUse));
+  sortBtn.title = byUse ? "Tri : plus entamées d'abord" : "Tri : mon ordre";
   sortBtn.setAttribute("aria-label", byUse ? "Tri : plus entamées d'abord. Revenir à mon ordre" : "Tri : mon ordre. Trier par enveloppe la plus entamée");
 
   const list = $("#env-list");
@@ -897,6 +1067,7 @@ function renderAccueil() {
     const spentHere = perEnv[env.id] || 0;
     const envBudget = budgetHere(env);
     const carried = carryIn(env, state.month);
+    const moved = transferNet(env.id, state.month);
     const over = spentHere > envBudget;
     const pct = envBudget > 0 ? Math.round((spentHere / envBudget) * 100) : spentHere > 0 ? 100 : 0;
 
@@ -923,7 +1094,9 @@ function renderAccueil() {
     sub.className = "env-sub";
     sub.textContent =
       `${over ? "dépassé" : "restants"} sur ${money(envBudget)}` +
-      (carried ? ` (dont ${money(carried)} reportés)` : "") +
+      (carried || moved
+        ? ` (${[carried ? `report ${money(carried)}` : "", moved ? `virement ${moved > 0 ? "+" : "−"}${money(Math.abs(moved))}` : ""].filter(Boolean).join(" · ")})`
+        : "") +
       (env.archivee ? " · archivée" : "");
     const right = document.createElement("span");
     right.className = state.managing ? "env-edit" : "env-p";
@@ -1004,15 +1177,118 @@ function renderAccueil() {
 
   if (!envelopes().length)
     list.append(emptyBlock("Aucune enveloppe", "Ajoute un poste de dépense pour commencer.", { label: "Créer une enveloppe", run: () => openEnvSheet(null) }, "wallet"));
+  renderNotices();
   renderGoals();
 }
 
+/* ---------------------------------------------------------- avis : seuils, à classer, à confirmer
+   iOS n'envoie pas de notification à une appli web sans serveur : les avis vivent dans l'appli,
+   en tête de l'accueil, et se rangent d'un geste (✕) — pour le mois, au niveau atteint. */
+function renderNotices() {
+  const box = $("#notices");
+  box.replaceChildren();
+  const month = state.month;
+  const thisMonth = todayIso().slice(0, 7);
+  const dismissed = new Set(state.data.settings.dismissed);
+  const items = [];
+
+  if (month === thisMonth) {
+    const perEnv = spentByEnv(month);
+    for (const env of envelopesFor(month)) {
+      const budget = budgetOf(env, month);
+      if (budget <= 0) continue;
+      const spent = perEnv[env.id] || 0;
+      const pct = (spent / budget) * 100;
+      const level = pct >= 100 ? "100" : pct >= 80 ? "80" : null;
+      const key = `${month}|${env.id}|${level}`;
+      if (!level || dismissed.has(key)) continue;
+      items.push({
+        kind: "alerte", key, env, warn: level === "100",
+        title: level === "100" ? `${env.nom} dépassée` : `${env.nom} à ${Math.round(pct)} %`,
+        sub: level === "100" ? `${money(spent - budget)} au-dessus du budget` : `il reste ${money(budget - spent)}`,
+      });
+    }
+  }
+  const unfiled = state.data.expenses.filter((t) => !envById(t.envelopeId)).length;
+  if (unfiled) items.push({ kind: "classer", title: `${unfiled} dépense${unfiled > 1 ? "s" : ""} à classer`, sub: "sans enveloppe — touche pour les ranger" });
+  const estimated = state.data.expenses.filter((t) => t.estime).length;
+  if (estimated) items.push({ kind: "confirmer", title: `${estimated} montant${estimated > 1 ? "s" : ""} à confirmer`, sub: "estimés par une règle à montant variable" });
+
+  // trois avis au plus d'emblée : plus, ils repousseraient les enveloppes hors de l'écran
+  const shown = state.noticesAll ? items : items.slice(0, 3);
+  for (const item of shown) {
+    const row = document.createElement("div");
+    row.className = "notice" + (item.warn ? " is-warn" : "");
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "notice-main";
+    main.dataset.notice = item.kind;
+    if (item.env) main.dataset.env = item.env.id;
+    main.append(item.env ? badge("env-dot", item.env.couleur, initialOf(item.env.nom)) : badge("env-dot", "#6E7686", item.kind === "classer" ? "?" : "~"));
+    const text = document.createElement("span");
+    const b = document.createElement("b");
+    b.textContent = item.title;
+    const sub = document.createElement("span");
+    sub.textContent = item.sub;
+    text.append(b, sub);
+    main.append(text);
+    row.append(main);
+    if (item.key) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "notice-x";
+      x.dataset.dismiss = item.key;
+      x.setAttribute("aria-label", `Ranger l'avis : ${item.title}`);
+      x.textContent = "✕";
+      row.append(x);
+    }
+    box.append(row);
+  }
+  if (items.length > 3) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "link-btn notices-more";
+    more.dataset.moreNotices = "1";
+    more.textContent = state.noticesAll ? "Réduire" : `Voir ${items.length - 3} autre${items.length - 3 > 1 ? "s" : ""}`;
+    box.append(more);
+  }
+}
+
+$("#notices").addEventListener("click", (e) => {
+  if (e.target.closest("[data-more-notices]")) {
+    state.noticesAll = !state.noticesAll;
+    return render();
+  }
+  const x = e.target.closest("[data-dismiss]");
+  if (x) {
+    const list = state.data.settings.dismissed;
+    list.push(x.dataset.dismiss);
+    // on ne garde que les avis du mois en cours
+    state.data.settings.dismissed = list.filter((k) => k.startsWith(todayIso().slice(0, 7))).slice(-80);
+    save();
+    return render();
+  }
+  const main = e.target.closest("[data-notice]");
+  if (!main) return;
+  state.query = "";
+  $("#tx-search").value = "";
+  state.filterEnv = null;
+  state.filterSpecial = null;
+  if (main.dataset.notice === "alerte") state.filterEnv = main.dataset.env;
+  else state.filterSpecial = main.dataset.notice;
+  state.view = "depenses";
+  render();
+});
+
 /* ---------------------------------------------------------- objectifs d'épargne */
+
+/** Épargné = ce qui a été saisi à la main + les mises de côté automatiques déjà tombées. */
+const goalSaved = (g) => g.epargne + state.data.expenses.filter((t) => t.goalId === g.id).reduce((n, t) => n + t.montant, 0);
 
 /** Ce qu'il faut mettre de côté chaque mois pour tenir l'échéance (mois en cours compris). */
 function goalMonthly(g) {
   if (!g.echeance) return null;
-  const left = g.cible - g.epargne;
+  const left = g.cible - goalSaved(g);
   if (left <= 0) return 0;
   const [y1, m1] = todayIso().slice(0, 7).split("-").map(Number);
   const [y2, m2] = g.echeance.split("-").map(Number);
@@ -1029,8 +1305,9 @@ function renderGoals() {
     return;
   }
   for (const g of goals) {
-    const pct = Math.min(100, Math.round((g.epargne / g.cible) * 100));
-    const done = g.epargne >= g.cible;
+    const saved = goalSaved(g);
+    const pct = Math.min(100, Math.round((saved / g.cible) * 100));
+    const done = saved >= g.cible;
     const row = document.createElement("button");
     row.type = "button";
     row.className = "goal" + (done ? " is-done" : "");
@@ -1043,7 +1320,7 @@ function renderGoals() {
     name.textContent = g.nom;
     const amount = document.createElement("span");
     amount.className = "goal-a";
-    amount.textContent = `${money(g.epargne)} / ${money(g.cible)}`;
+    amount.textContent = `${money(saved)} / ${money(g.cible)}`;
     head.append(name, amount);
 
     const track = document.createElement("span");
@@ -1055,14 +1332,17 @@ function renderGoals() {
     const sub = document.createElement("span");
     sub.className = "goal-sub";
     const monthly = goalMonthly(g);
+    // avec une mise de côté automatique, on dit QUAND l'objectif sera atteint à ce rythme
+    const arrival = g.mensuel > 0 && !done ? shiftMonth(todayIso().slice(0, 7), Math.ceil((g.cible - saved) / g.mensuel)) : null;
     sub.textContent = done
       ? "Objectif atteint"
       : `${pct} %` +
-        (g.echeance ? ` · pour ${monthName(g.echeance).toLowerCase()} ${g.echeance.slice(0, 4)}` : "") +
-        (monthly ? ` · ${money(monthly)} par mois` : "");
+        (g.mensuel > 0 ? ` · ${money(g.mensuel)} par mois, automatique` : monthly ? ` · ${money(monthly)} par mois` : "") +
+        (arrival ? ` · atteint vers ${monthName(arrival).toLowerCase()} ${arrival.slice(0, 4)}` : "") +
+        (g.echeance ? ` · pour ${monthName(g.echeance).toLowerCase()} ${g.echeance.slice(0, 4)}` : "");
 
     row.append(head, track, sub);
-    row.setAttribute("aria-label", `${g.nom}, ${money(g.epargne)} sur ${money(g.cible)}, ${pct} %`);
+    row.setAttribute("aria-label", `${g.nom}, ${money(saved)} sur ${money(g.cible)}, ${pct} %`);
     list.append(row);
   }
 }
@@ -1074,6 +1354,8 @@ function openGoalSheet(goal) {
   $("#goal-target").value = goal ? toInput(goal.cible) : "";
   $("#goal-saved").value = goal && goal.epargne ? toInput(goal.epargne) : "";
   $("#goal-date").value = goal?.echeance ?? "";
+  $("#goal-monthly").value = goal?.mensuel ? toInput(goal.mensuel) : "";
+  $("#goal-day").value = goal ? String(goal.jour) : "1";
   $("#goal-deposit").value = "";
   $("#goal-name-error").hidden = true;
   $("#goal-target-error").hidden = true;
@@ -1085,7 +1367,8 @@ function openGoalSheet(goal) {
 
 function updateGoalPace() {
   const cible = parseAmount($("#goal-target").value);
-  const saved = parseAmount($("#goal-saved").value) ?? 0;
+  const goal = state.data.goals.find((g) => g.id === state.editingGoal);
+  const saved = (parseAmount($("#goal-saved").value) ?? 0) + (goal ? goalSaved(goal) - goal.epargne : 0);
   const echeance = $("#goal-date").value;
   const hint = $("#goal-pace");
   const monthly = cible && echeance ? goalMonthly({ cible, epargne: saved, echeance }) : null;
@@ -1101,6 +1384,70 @@ $("#goal-list").addEventListener("click", (e) => {
   if (goal) openGoalSheet(goal);
 });
 
+/* ---- épargne reliée au budget ----
+   Une mise de côté automatique est une VRAIE dépense mensuelle de l'enveloppe « Épargne » :
+   elle pèse sur « il te reste », se voit dans le bilan, et fait avancer l'objectif (`goalId`).
+   Elle passe par une règle récurrente ordinaire, donc rattrapée, annulable et ignorable comme
+   les autres. L'enveloppe « Épargne » est créée au besoin, et son budget suit la somme des
+   mises de côté tant qu'elle reste « automatique ». */
+function ensureSavingsEnvelope() {
+  let env = state.data.envelopes.find((e) => !e.archivee && noAccent(e.nom) === "epargne");
+  if (!env) {
+    env = {
+      id: uid(), nom: "Épargne", couleur: "#1B9AAA", budget: 0, budgetHistory: [],
+      report: false, reportDepuis: null, archivee: false, auto: true,
+      ordre: state.data.envelopes.length,
+    };
+    state.data.envelopes.push(env);
+  }
+  return env;
+}
+
+function syncSavings() {
+  const goals = state.data.goals;
+  const active = goals.filter((g) => g.mensuel > 0 && goalSaved(g) < g.cible);
+  const thisMonth = todayIso().slice(0, 7);
+  const rules = state.data.recurring;
+
+  for (const g of goals) {
+    const rule = rules.find((r) => r.goalId === g.id);
+    const wanted = g.mensuel > 0 && goalSaved(g) < g.cible;
+    if (wanted) {
+      const env = ensureSavingsEnvelope();
+      const fields = {
+        type: "depense", montant: g.mensuel, libelle: `Épargne : ${g.nom}`, jour: g.jour, actif: true,
+        icone: null, envelopeId: env.id, evitable: false, freq: "mensuel", ancre: null, fin: null, variable: false, goalId: g.id,
+      };
+      if (rule) Object.assign(rule, fields);
+      else rules.push({ id: uid(), createdAt: Date.now(), debut: thisMonth, skipped: [], ...fields });
+    } else if (rule) {
+      state.data.recurring = state.data.recurring.filter((r) => r.id !== rule.id);
+    }
+  }
+  // une règle dont l'objectif a disparu n'a plus de raison d'être
+  state.data.recurring = state.data.recurring.filter((r) => !r.goalId || goals.some((g) => g.id === r.goalId));
+
+  const env = state.data.envelopes.find((e) => e.auto && !e.archivee);
+  if (env) {
+    const total = active.reduce((n, g) => n + g.mensuel, 0);
+    if (budgetFor(env, thisMonth) !== total) setBudgetFrom(env, thisMonth, total);
+  }
+}
+
+/** Photographie de ce que la synchronisation d'un objectif peut toucher, pour pouvoir l'annuler. */
+function savingsSnapshot() {
+  const recurring = [...state.data.recurring];
+  const envelopes = [...state.data.envelopes];
+  const envRestores = state.data.envelopes.map(snapshotOf);
+  const rulesRestores = state.data.recurring.map(snapshotOf);
+  return () => {
+    state.data.recurring = recurring;
+    state.data.envelopes = envelopes;
+    for (const r of envRestores) r();
+    for (const r of rulesRestores) r();
+  };
+}
+
 $("#goal-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const nom = $("#goal-name").value.trim();
@@ -1109,26 +1456,37 @@ $("#goal-form").addEventListener("submit", (e) => {
   $("#goal-target-error").hidden = cible !== null;
   if (!nom) return $("#goal-name").focus();
   if (cible === null) return $("#goal-target").focus();
+  const day = Number.parseInt($("#goal-day").value, 10);
   const payload = {
     nom,
     cible,
     epargne: parseAmount($("#goal-saved").value) ?? 0,
     echeance: $("#goal-date").value || null,
+    mensuel: parseAmount($("#goal-monthly").value) ?? 0,
+    jour: Number.isInteger(day) ? Math.min(31, Math.max(1, day)) : 1,
   };
+  const restoreSavings = savingsSnapshot();
   if (state.editingGoal) {
     const goal = state.data.goals.find((g) => g.id === state.editingGoal);
     const restore = snapshotOf(goal);
     Object.assign(goal, payload);
+    syncSavings();
+    generateRecurring();
     save();
     closeSheets();
     render();
-    return offerUndo("Objectif modifié.", restore);
+    return offerUndo("Objectif modifié.", () => {
+      restore();
+      restoreSavings();
+    });
   }
   state.data.goals.push({ id: uid(), createdAt: Date.now(), ...payload });
+  syncSavings();
+  generateRecurring();
   save();
   closeSheets();
   render();
-  toast("Objectif créé.");
+  toast(payload.mensuel ? `Objectif créé : ${money(payload.mensuel)} mis de côté chaque mois.` : "Objectif créé.");
 });
 
 $("#goal-deposit-btn").addEventListener("click", () => {
@@ -1137,6 +1495,7 @@ $("#goal-deposit-btn").addEventListener("click", () => {
   if (!goal || cents === null) return toast("Entre un montant à verser.");
   const restore = snapshotOf(goal);
   goal.epargne += cents;
+  syncSavings();
   save();
   closeSheets();
   render();
@@ -1146,12 +1505,15 @@ $("#goal-deposit-btn").addEventListener("click", () => {
 $("#goal-delete").addEventListener("click", (e) => {
   const goal = state.data.goals.find((g) => g.id === state.editingGoal);
   armDanger(e.currentTarget, "Confirmer la suppression ?", () => {
+    const restoreSavings = savingsSnapshot();
     state.data.goals = state.data.goals.filter((g) => g.id !== state.editingGoal);
+    syncSavings();
     save();
     closeSheets();
     render();
     offerUndo("Objectif supprimé.", () => {
       if (goal) state.data.goals.push(goal);
+      restoreSavings();
     });
   });
 });
@@ -1252,12 +1614,15 @@ function renderDepenses() {
   list.replaceChildren();
 
   const filter = state.filterEnv ? envById(state.filterEnv) : null;
-  $("#filter-bar").hidden = !filter;
+  const special = state.filterSpecial;
+  $("#filter-bar").hidden = !filter && !special;
   if (filter) $("#filter-label").textContent = `Enveloppe : ${filter.nom}`;
+  if (special) $("#filter-label").textContent = special === "classer" ? "À classer : dépenses sans enveloppe" : "À confirmer : montants estimés";
   $("#clear-search").hidden = !state.query;
   renderFilters();
 
-  const query = state.query.trim().toLowerCase();
+  // « cafe » doit trouver « Café » : comparaison sans accent ni casse, des deux côtés
+  const query = noAccent(state.query);
   const range = periodRange();
 
   /* Une recherche porte sur TOUT l'historique, pas sur le seul mois affiché.
@@ -1265,7 +1630,7 @@ function renderDepenses() {
      on retrouvait une ligne sur deux sans jamais savoir que l'autre existait.
      Une période choisie explicitement reprend la main : elle borne aussi la recherche. */
   const searching = Boolean(query);
-  const wide = searching || state.period !== "mois";
+  const wide = searching || state.period !== "mois" || Boolean(special);
   const pool = wide
     ? [state.data.expenses, state.data.incomes]
     : [expensesOf(state.month), incomesOf(state.month)];
@@ -1281,11 +1646,13 @@ function renderDepenses() {
 
   // un filtre d'enveloppe ne s'applique qu'aux dépenses : un revenu n'en a pas
   if (filter) items = items.filter((t) => t.kind === "depense" && t.envelopeId === filter.id);
+  if (special === "classer") items = items.filter((t) => t.kind === "depense" && !envById(t.envelopeId));
+  if (special === "confirmer") items = items.filter((t) => t.estime);
 
   if (query) {
     items = items.filter((t) => {
       const where = t.kind === "revenu" ? "revenu" : envById(t.envelopeId)?.nom ?? "sans enveloppe";
-      return `${t.libelle ?? ""} ${where}`.toLowerCase().includes(query);
+      return noAccent(`${t.libelle ?? ""} ${where} ${t.note ?? ""}`).includes(query);
     });
   }
 
@@ -1293,7 +1660,7 @@ function renderDepenses() {
 
   /* Sur plusieurs années, « Tout » fait des milliers de lignes : on n'en monte que
      soixante à la fois. Le compteur et « Tout sélectionner » portent, eux, sur tout. */
-  const limitKey = [state.month, state.query, state.period, state.dateFrom, state.dateTo, state.amountMin, state.amountMax, state.onlyAvoidable, state.filterEnv].join("|");
+  const limitKey = [state.month, state.query, state.period, state.dateFrom, state.dateTo, state.amountMin, state.amountMax, state.onlyAvoidable, state.filterEnv, state.filterSpecial].join("|");
   if (state.limitKey !== limitKey) {
     state.limitKey = limitKey;
     state.limit = PAGE_SIZE;
@@ -1310,7 +1677,7 @@ function renderDepenses() {
   // un filtre ou une recherche pose une question chiffrée (« combien chez eux ? ») :
   // le total de ce qui est affiché est la réponse, il n'a pas à être fait de tête
   const sum = $("#tx-sum");
-  sum.hidden = !(searching || filter || activeFilters()) || !allItems.length;
+  sum.hidden = !(searching || filter || special || activeFilters()) || !allItems.length;
   if (!sum.hidden) {
     const items = allItems;
     const out = items.filter((t) => t.kind === "depense").reduce((n, t) => n + t.montant, 0);
@@ -1333,7 +1700,9 @@ function renderDepenses() {
           ? "Aucun mouvement ne correspond à cette recherche."
           : activeFilters()
             ? "Aucun mouvement ne correspond à ces filtres."
-            : filter
+            : special
+              ? "Rien à traiter ici : c'est propre."
+              : filter
               ? "Aucune dépense dans cette enveloppe."
               : narrowed
                 ? "Rien à afficher."
@@ -1387,12 +1756,22 @@ function renderDepenses() {
       (tx.recurringId ? "↻ " : "") + (tx.libelle || (revenu ? "Revenu" : env ? env.nom : "Dépense"));
     const sub = document.createElement("span");
     sub.textContent =
-      (revenu ? "Revenu" : env ? env.nom : "Sans enveloppe") + (!revenu && isAvoidable(tx) ? " · évitable" : "");
+      (revenu ? "Revenu" : env ? env.nom : "Sans enveloppe") +
+      (!revenu && isAvoidable(tx) ? " · évitable" : "") +
+      (tx.estime ? " · à confirmer" : "") +
+      (tx.splitId ? " · part d'une division" : "") +
+      (tx.via ? " · raccourci" : "");
     text.append(label, sub);
+    if (tx.note) {
+      const note = document.createElement("span");
+      note.className = "tx-note";
+      note.textContent = tx.note;
+      text.append(note);
+    }
 
     const amount = document.createElement("span");
     amount.className = `tx-a ${revenu ? "is-income" : "is-expense"}`;
-    amount.textContent = `${revenu ? "+" : "−"}${money(tx.montant)}`;
+    amount.textContent = `${revenu ? "+" : "−"}${tx.estime ? "~" : ""}${money(tx.montant)}`;
 
     row.append(dot, text, amount);
     list.append(row);
@@ -1456,6 +1835,8 @@ function renderBilan() {
     $("#bilan-evitable").textContent = `dont évitable ${money(avoidable)} · ${part} % des dépenses`;
   }
 
+  renderRecap(spent);
+
   /* Fenêtre du graphique : six mois (défaut), douze mois, ou l'année civile du mois affiché.
      À douze barres il n'y a plus de place pour un montant sous chacune : seule la barre
      choisie porte le sien, et les mois s'abrègent à leur initiale. */
@@ -1515,6 +1896,75 @@ function renderBilan() {
 
   renderTrend(keys);
   renderRepartition(spent);
+}
+
+/* ---- le mois en trois phrases ----
+   Un résumé que l'on lit en dix secondes, composé uniquement de ce qui existe : pas de phrase
+   creuse quand une donnée manque. Disponible pour n'importe quel mois, en cours ou terminé. */
+function monthRecap(month) {
+  const spent = totalSpent(month);
+  if (!spent) return [];
+  const prev = shiftMonth(month, -1);
+  const budget = totalBudget(month);
+  const current = month === todayIso().slice(0, 7);
+  const name = monthName(month).toLowerCase();
+  const out = [];
+
+  out.push(
+    budget > 0
+      ? `${current ? `Depuis le début de ${name}` : `En ${name}`}, tu as dépensé ${money(spent)} sur ${money(budget)} de budgets (${Math.round((spent / budget) * 100)} %).`
+      : `${current ? `Depuis le début de ${name}` : `En ${name}`}, tu as dépensé ${money(spent)}.`
+  );
+
+  const table = spentTable();
+  const rows = allEnvelopes()
+    .map((e) => ({ e, now: table[month]?.[e.id] || 0, before: table[prev]?.[e.id] || 0 }))
+    .filter((r) => r.now || r.before);
+  const top = [...rows].sort((a, b) => b.now - a.now)[0];
+  const mover = [...rows].sort((a, b) => Math.abs(b.now - b.before) - Math.abs(a.now - a.before))[0];
+  const bits = [];
+  if (top && top.now) bits.push(`Le poste le plus lourd : ${top.e.nom} (${money(top.now)}, ${Math.round((top.now / spent) * 100)} %).`);
+  if (mover && totalSpent(prev) && Math.abs(mover.now - mover.before) >= 2000)
+    bits.push(`Plus forte variation : ${mover.e.nom}, ${mover.now > mover.before ? "+" : "−"}${money(Math.abs(mover.now - mover.before))} par rapport à ${monthName(prev).toLowerCase()}.`);
+  if (bits.length) out.push(bits.join(" "));
+
+  const avoidable = avoidableSpent(month);
+  const income = totalIncome(month);
+  const tail = [];
+  if (avoidable) tail.push(`${money(avoidable)} étaient évitables (${Math.round((avoidable / spent) * 100)} %).`);
+  if (income) tail.push(income >= spent ? `Revenus de ${money(income)} : ${money(income - spent)} de côté.` : `Revenus de ${money(income)} : il manque ${money(spent - income)}.`);
+  if (tail.length) out.push(tail.join(" "));
+  return out;
+}
+
+function renderRecap() {
+  const sentences = monthRecap(state.month);
+  $("#recap").hidden = !sentences.length;
+  const box = $("#recap-text");
+  box.replaceChildren();
+  for (const text of sentences) {
+    const p = document.createElement("p");
+    p.textContent = text;
+    box.append(p);
+  }
+}
+
+/** Début de mois : le récap du mois écoulé est prêt, proposé une seule fois. */
+function maybeAnnounceRecap() {
+  const today = new Date();
+  const prev = shiftMonth(todayIso().slice(0, 7), -1);
+  if (today.getDate() > 5 || state.data.settings.recapSeen === prev || !monthRecap(prev).length) return false;
+  state.data.settings.recapSeen = prev;
+  save();
+  toast(`Le récap de ${monthName(prev).toLowerCase()} est prêt.`, {
+    label: "Voir",
+    run: () => {
+      state.month = prev;
+      state.view = "bilan";
+      render();
+    },
+  });
+  return true;
 }
 
 /* Par enveloppe : sur la fenêtre du graphique, la dépense de chaque mois en petites barres,
@@ -1760,6 +2210,18 @@ function renderReglages() {
       : storagePersisted
         ? "Stockage protégé contre le nettoyage automatique."
         : "Stockage non protégé : installe l'appli sur l'écran d'accueil et sauvegarde régulièrement.";
+  $("#open-on-add").checked = state.data.settings.openOnAdd;
+  const inbox = state.data.settings.lastInbox;
+  $("#inbox-stat").textContent = inbox
+    ? `Dernier import : ${inbox.n} saisie${inbox.n > 1 ? "s" : ""}, le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short" }).format(inbox.at)}.`
+    : "Aucun import pour l'instant.";
+  let rescue = null;
+  try {
+    rescue = localStorage.getItem(RESCUE_KEY);
+  } catch {
+    /* stockage inaccessible */
+  }
+  $("#rescue-row").hidden = !rescue;
   $("#version").textContent = `Mon Budget ${APP_VERSION}`;
   // déjà installée : la carte d'instructions n'a plus rien à apprendre
   const installed = isStandalone();
@@ -1781,21 +2243,20 @@ function renderReglages() {
 /** Prochaines échéances dans les 7 jours : règles actives dont la date tombe d'ici là
     et qui n'ont pas déjà été tamponnées pour ce mois-ci. */
 function upcomingRules() {
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
   const out = [];
   for (const rule of recurringRules().filter((r) => r.actif)) {
-    for (const delta of [0, 1]) {
-      const month = shiftMonth(todayIso().slice(0, 7), delta);
-      const day = effDay(rule, month);
-      const date = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, day);
-      const days = Math.round((date - start) / 86400000);
-      if (days < 0 || days > 7) continue;
-      const list = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
-      // déjà tombée ce mois-ci : elle est dans l'historique, pas « à venir »
-      if (list.some((t) => t.recurringId === rule.id && monthOf(t.date) === month)) continue;
-      out.push({ rule, days, date });
-      break;
+    const list = rule.type === "revenu" ? state.data.incomes : state.data.expenses;
+    const done = new Set(list.filter((t) => t.recurringId === rule.id).map((t) => ruleKey(rule, t.date)));
+    for (const k of rule.skipped || []) done.add(k);
+    for (const occ of occurrences(rule, isoDay(start), isoDay(end))) {
+      // déjà tombée : elle est dans l'historique, pas « à venir »
+      if (done.has(occ.key)) continue;
+      const date = isoToDate(occ.date);
+      out.push({ rule, days: Math.round((date - start) / 86400000), date });
     }
   }
   return out.sort((a, b) => a.days - b.days);
@@ -1834,7 +2295,10 @@ function renderUpcoming() {
   }
 
   // charges fixes contre revenus récurrents : ce qui reste une fois le fixe payé
-  const sum = (type) => recurringRules(type).filter((r) => r.actif).reduce((n, r) => n + r.montant, 0);
+  const sum = (type) =>
+    recurringRules(type)
+      .filter((r) => r.actif && !(r.fin && r.fin < todayIso()))
+      .reduce((n, r) => n + monthlyEquivalent(r), 0);
   const fixed = sum("depense");
   const incomes = sum("revenu");
   const free = incomes - fixed;
@@ -1842,8 +2306,8 @@ function renderUpcoming() {
   box.hidden = !fixed && !incomes;
   box.replaceChildren();
   for (const [k, v, cls] of [
-    ["Charges fixes", `−${money(fixed)}`, "is-expense"],
-    ["Revenus fixes", `+${money(incomes)}`, "is-income"],
+    ["Charges / mois", `−${money(fixed)}`, "is-expense"],
+    ["Revenus / mois", `+${money(incomes)}`, "is-income"],
     [free < 0 ? "Manque" : "Reste libre", `${free < 0 ? "−" : "+"}${money(Math.abs(free))}`, free < 0 ? "is-expense" : "is-income"],
   ]) {
     const cell = document.createElement("div");
@@ -1878,6 +2342,14 @@ function renderCalendar() {
   const daysInMonth = new Date(y, m, 0).getDate();
   const rules = recurringRules().filter((r) => r.actif);
   const today = todayIso();
+  // jour du mois → règles qui y tombent (chaque fréquence à sa manière)
+  const byDay = new Map();
+  for (const rule of rules) {
+    for (const occ of occurrences(rule, `${state.month}-01`, `${state.month}-${pad(daysInMonth)}`)) {
+      const d = Number(occ.date.slice(8, 10));
+      byDay.set(d, [...(byDay.get(d) || []), rule]);
+    }
+  }
 
   for (let i = 0; i < startOffset; i++) {
     const filler = document.createElement("div");
@@ -1887,7 +2359,7 @@ function renderCalendar() {
 
   for (let day = 1; day <= daysInMonth; day++) {
     const iso = `${state.month}-${pad(day)}`;
-    const here = rules.filter((r) => effDay(r, state.month) === day);
+    const here = byDay.get(day) || [];
 
     const cell = document.createElement("button");
     cell.type = "button";
@@ -1916,10 +2388,10 @@ function renderCalendar() {
     grid.append(cell);
   }
 
-  renderCalendarDay(rules);
+  renderCalendarDay(byDay);
 }
 
-function renderCalendarDay(monthRules) {
+function renderCalendarDay(byDay) {
   const panel = $("#cal-day");
   panel.replaceChildren();
 
@@ -1934,7 +2406,7 @@ function renderCalendarDay(monthRules) {
   heading.textContent = capitalize(longDate(new Date(`${state.calDay}T12:00:00`)));
   panel.append(heading);
 
-  const items = monthRules.filter((r) => effDay(r, state.month) === day);
+  const items = [...(byDay.get(day) || [])];
   if (!items.length) {
     panel.append(emptyBlock("Rien ce jour-là", "Aucune dépense ni revenu récurrent prévu."));
     return;
@@ -1998,14 +2470,18 @@ function renderRecurringList(type, listId, emptyTitle, emptySub) {
     name.textContent = rule.libelle;
     const sub = document.createElement("span");
     const where = type === "revenu" ? "Revenu" : (envById(rule.envelopeId)?.nom ?? "");
-    sub.textContent = rule.actif
-      ? `${where} · ${rule.jour > 28 ? `le ${rule.jour} (ou fin de mois)` : `le ${rule.jour}`}`
-      : `${where} · en pause`;
+    const ended = rule.fin && rule.fin < todayIso();
+    sub.textContent = !rule.actif
+      ? `${where} · en pause`
+      : `${rule.goalId ? "Objectif d'épargne" : where} · ${freqText(rule)}` +
+        (ended ? " · terminée" : rule.fin ? ` · jusqu'au ${new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(isoToDate(rule.fin))}` : "") +
+        (rule.variable ? " · estimé" : "");
+    if (ended) row.classList.add("is-paused");
     text.append(name, sub);
 
     const amount = document.createElement("span");
     amount.className = "tx-a " + (type === "revenu" ? "is-income" : "is-expense");
-    amount.textContent = (type === "revenu" ? "+" : "−") + money(rule.montant);
+    amount.textContent = (type === "revenu" ? "+" : "−") + (rule.variable ? "~" : "") + money(rule.montant);
 
     row.append(chip, text, amount);
     row.setAttribute("aria-label", `${rule.libelle}, ${money(rule.montant)}, ${sub.textContent}`);
@@ -2111,8 +2587,12 @@ function openTxSheet(tx, prefill = null, type = "depense") {
   $("#tx-amount").value = tx ? toInput(tx.montant) : (prefill?.montantText ?? "");
   sizeAmountInput($("#tx-amount"));
   $("#tx-label").value = tx ? tx.libelle : (prefill?.libelle ?? "");
-  $("#tx-date").value = tx ? tx.date : todayIso();
+  $("#tx-date").value = tx ? tx.date : prefill?.date || todayIso();
   $("#tx-evitable").checked = Boolean(tx ? tx.evitable : prefill?.evitable);
+  $("#tx-note").value = tx?.note ?? prefill?.note ?? "";
+  $("#tx-split").checked = false;
+  $("#split-parts").hidden = true;
+  state.splitParts = [];
   $("#tx-amount-error").hidden = true;
   $("#tx-delete").hidden = !tx;
   $("#tx-duplicate").hidden = !tx;
@@ -2230,7 +2710,12 @@ function updateTxTypeUI(editing) {
     b.setAttribute("aria-checked", String(on));
   }
   $("#tx-type").hidden = editing;
-  $("#tx-env-block").hidden = revenu;
+  const asPart = Boolean(state.editingTx && !revenu && state.data.expenses.find((t) => t.id === state.editingTx)?.splitId);
+  const splitting = $("#tx-split").checked && !revenu && !asPart;
+  $("#tx-env-block").hidden = revenu || splitting;
+  $("#split-row").hidden = revenu || asPart;
+  $("#split-note").hidden = !asPart;
+  $("#split-parts").hidden = !splitting;
   $("#tx-evitable-row").hidden = revenu;
   $("#tx-label").placeholder = revenu ? "Salaire, remboursement, prime…" : "Monoprix, essence, resto…";
   $("#tx-title").textContent = editing
@@ -2294,6 +2779,11 @@ function openRecurringSheet(rule, defaultType = "depense") {
   sizeAmountInput($("#recurring-amount"));
   $("#recurring-label").value = rule ? rule.libelle : "";
   $("#recurring-day").value = rule ? String(rule.jour) : "";
+  state.draftRecurringFreq = rule?.freq || "mensuel";
+  $("#recurring-anchor").value = rule?.ancre || "";
+  $("#recurring-end").value = rule?.fin || "";
+  $("#recurring-variable").checked = Boolean(rule?.variable);
+  $("#recurring-anchor-error").hidden = true;
   $("#recurring-evitable").checked = Boolean(rule?.evitable);
   $("#recurring-amount-error").hidden = true;
   $("#recurring-label-error").hidden = true;
@@ -2327,6 +2817,26 @@ function openRecurringSheet(rule, defaultType = "depense") {
   if (!rule) setTimeout(() => $("#recurring-amount").focus(), 320);
 }
 
+/** Champs de la fréquence : un jour du mois, ou une date de référence. */
+function updateFreqUI() {
+  const f = state.draftRecurringFreq;
+  for (const b of document.querySelectorAll("#recurring-freq [data-freq]")) {
+    const on = b.dataset.freq === f;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+  $("#recurring-day-field").hidden = f !== "mensuel";
+  $("#recurring-anchor-field").hidden = f === "mensuel";
+  $("#recurring-anchor-label").textContent =
+    f === "hebdo" ? "Prochain passage (donne le jour de la semaine)" : f === "trimestre" ? "Prochaine échéance (puis tous les 3 mois)" : "Prochaine échéance (puis chaque année)";
+}
+$("#recurring-freq").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-freq]");
+  if (!btn) return;
+  state.draftRecurringFreq = btn.dataset.freq;
+  updateFreqUI();
+});
+
 /** Bascule l'enveloppe (masquée pour un revenu), le titre et la liste de modèles selon le type choisi. */
 function updateRecurringTypeUI(editing) {
   for (const b of document.querySelectorAll("#recurring-type button")) {
@@ -2334,6 +2844,7 @@ function updateRecurringTypeUI(editing) {
     b.classList.toggle("on", on);
     b.setAttribute("aria-checked", String(on));
   }
+  updateFreqUI();
   $("#recurring-env-block").hidden = state.draftRecurringType === "revenu";
   $("#recurring-evitable-row").hidden = state.draftRecurringType === "revenu";
 
@@ -2741,7 +3252,10 @@ $("#cal-grid").addEventListener("click", (e) => {
 
 function showView(view) {
   state.view = view;
-  if (state.view !== "depenses") state.filterEnv = null;
+  if (state.view !== "depenses") {
+    state.filterEnv = null;
+    state.filterSpecial = null;
+  }
   clearFocus();
   // « Tout effacer » vit dans une vue, pas dans un tiroir : sans ça il restait
   // armé pendant qu'on regardait ailleurs, et un retour dans les cinq secondes
@@ -3003,6 +3517,97 @@ $(".views").addEventListener("pointerup", (e) => {
 });
 $(".views").addEventListener("pointercancel", () => (pan = null));
 
+/* ---- virer du budget d'une enveloppe à une autre, pour ce mois ----
+   Le budget des courses est épuisé le 20 mais les sorties ont de la marge : on déplace 50 €
+   pour CE mois seulement. Le budget de base et les mois suivants ne bougent pas, et le total
+   des budgets reste identique. */
+function transferEnvOptions(select, selected) {
+  select.replaceChildren();
+  for (const env of envelopes()) {
+    const o = document.createElement("option");
+    o.value = env.id;
+    o.textContent = env.nom;
+    o.selected = env.id === selected;
+    select.append(o);
+  }
+}
+
+function renderTransfer() {
+  const month = state.month;
+  const spent = spentByEnv(month);
+  const avail = (id) => Math.max(0, budgetOf(envById(id), month) - (spent[id] || 0));
+  $("#tr-avail").textContent = `Disponible dans « ${envById($("#tr-from").value)?.nom ?? ""} » : ${money(avail($("#tr-from").value))}`;
+  const list = $("#tr-list");
+  list.replaceChildren();
+  for (const t of (state.data.transfers || []).filter((x) => x.month === month)) {
+    const row = document.createElement("div");
+    row.className = "tr-row";
+    const text = document.createElement("span");
+    text.textContent = `${envById(t.from)?.nom ?? "?"} → ${envById(t.to)?.nom ?? "?"}`;
+    const amount = document.createElement("b");
+    amount.textContent = money(t.montant);
+    const x = document.createElement("button");
+    x.type = "button";
+    x.dataset.untransfer = t.id;
+    x.setAttribute("aria-label", `Annuler le virement ${text.textContent}`);
+    x.textContent = "✕";
+    row.append(text, amount, x);
+    list.append(row);
+  }
+}
+
+$("#transfer-open").addEventListener("click", () => {
+  const envs = envelopes();
+  if (envs.length < 2) return toast("Il faut au moins deux enveloppes pour virer du budget.");
+  $("#transfer-title").textContent = `Virer du budget · ${monthName(state.month)} ${state.month.slice(0, 4)}`;
+  $("#transfer-note").textContent = "Le virement ne vaut que pour ce mois : les budgets de base et les mois suivants ne changent pas.";
+  transferEnvOptions($("#tr-from"), envs[0].id);
+  transferEnvOptions($("#tr-to"), envs[1].id);
+  $("#tr-amount").value = "";
+  $("#tr-error").hidden = true;
+  renderTransfer();
+  openSheet("#sheet-transfer");
+});
+$("#tr-from").addEventListener("change", renderTransfer);
+
+$("#transfer-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const from = $("#tr-from").value;
+  const to = $("#tr-to").value;
+  const cents = parseAmount($("#tr-amount").value);
+  const fail = (msg) => {
+    $("#tr-error").textContent = msg;
+    $("#tr-error").hidden = false;
+  };
+  if (from === to) return fail("Choisis deux enveloppes différentes.");
+  if (cents === null) return fail("Entre un montant, par exemple 50.");
+  const spent = spentByEnv(state.month);
+  const available = Math.max(0, budgetOf(envById(from), state.month) - (spent[from] || 0));
+  if (cents > available) return fail(`« ${envById(from).nom} » n'a que ${money(available)} de disponible.`);
+
+  const transfer = { id: uid(), month: state.month, from, to, montant: cents, createdAt: Date.now() };
+  state.data.transfers.push(transfer);
+  save();
+  closeSheets();
+  render();
+  offerUndo(`${money(cents)} virés de « ${envById(from).nom} » vers « ${envById(to).nom} » pour ce mois.`, () => {
+    state.data.transfers = state.data.transfers.filter((t) => t.id !== transfer.id);
+  });
+});
+
+$("#tr-list").addEventListener("click", (e) => {
+  const x = e.target.closest("[data-untransfer]");
+  if (!x) return;
+  const gone = state.data.transfers.find((t) => t.id === x.dataset.untransfer);
+  state.data.transfers = state.data.transfers.filter((t) => t.id !== x.dataset.untransfer);
+  save();
+  closeSheets();
+  render();
+  offerUndo("Virement annulé.", () => {
+    if (gone) state.data.transfers.push(gone);
+  });
+});
+
 /* ---- sélecteur de mois ---- */
 let pickYear = Number(todayIso().slice(0, 4));
 function renderMonthPicker() {
@@ -3045,6 +3650,7 @@ $("#month-today").addEventListener("click", () => {
 
 $("#clear-filter").addEventListener("click", () => {
   state.filterEnv = null;
+  state.filterSpecial = null;
   render();
 });
 
@@ -3296,17 +3902,26 @@ $("#tx-form").addEventListener("submit", (e) => {
     libelle: $("#tx-label").value.trim(),
     date: $("#tx-date").value || todayIso(),
   };
+  const note = $("#tx-note").value.trim();
+  if (note) payload.note = note;
   if (!revenu) {
     payload.envelopeId = state.draftEnv;
     if ($("#tx-evitable").checked) payload.evitable = true;
+  }
+
+  // division : l'écran produit plusieurs dépenses liées, une par enveloppe
+  if (!revenu && $("#tx-split").checked && !(state.editingTx && state.data.expenses.find((t) => t.id === state.editingTx)?.splitId)) {
+    return submitSplit(payload, cents);
   }
 
   if (state.editingTx) {
     const record = target.find((t) => t.id === state.editingTx);
     const restore = snapshotOf(record);
     const before = { ...record };
+    if (!note) delete record.note;
     if (!payload.evitable) delete record.evitable;
     Object.assign(record, payload);
+    delete record.estime; // l'ouvrir et la valider, c'est la confirmer
     // une échéance déplacée dans un autre mois laisse un trou dans l'ancien : la règle ne doit pas le « combler »
     const skip = monthOf(payload.date) !== monthOf(before.date) ? skipStamped([before]) : { undo() {} };
     undoAfterEdit = [revenu ? "Revenu modifié." : "Dépense modifiée.", () => { restore(); skip.undo(); }];
@@ -3328,6 +3943,124 @@ $("#tx-form").addEventListener("submit", (e) => {
   else haptic();
 });
 
+/* ---- division d'une dépense ----
+   Un ticket « courses + pharmacie » n'appartient pas à une seule enveloppe. Chaque part devient
+   une dépense à part entière (même libellé, même date, `splitId` commun) : les jauges, le bilan
+   et les filtres n'ont rien de nouveau à savoir. */
+function splitLeft() {
+  const total = parseAmount($("#tx-amount").value) ?? 0;
+  return total - state.splitParts.reduce((n, p) => n + (parseAmount(p.amount) ?? 0), 0);
+}
+
+function renderSplitLeft() {
+  const left = splitLeft();
+  const el = $("#split-left");
+  el.textContent = left === 0 ? "Répartition complète." : left > 0 ? `Reste à répartir : ${money(left)}` : `Trop réparti de ${money(-left)}`;
+  el.classList.toggle("split-ok", left === 0);
+}
+
+function renderSplit() {
+  const list = $("#split-list");
+  list.replaceChildren();
+  state.splitParts.forEach((part, i) => {
+    const row = document.createElement("div");
+    row.className = "split-row";
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", `Enveloppe de la part ${i + 1}`);
+    for (const env of envelopes()) {
+      const o = document.createElement("option");
+      o.value = env.id;
+      o.textContent = env.nom;
+      o.selected = env.id === part.env;
+      select.append(o);
+    }
+    select.addEventListener("change", () => (part.env = select.value));
+    const input = document.createElement("input");
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.autocomplete = "off";
+    input.placeholder = "0,00";
+    input.value = part.amount;
+    input.setAttribute("aria-label", `Montant de la part ${i + 1}`);
+    input.addEventListener("input", () => {
+      part.amount = input.value;
+      renderSplitLeft();
+    });
+    row.append(select, input);
+    if (state.splitParts.length > 2) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "split-x";
+      x.setAttribute("aria-label", `Retirer la part ${i + 1}`);
+      x.textContent = "✕";
+      x.addEventListener("click", () => {
+        state.splitParts.splice(i, 1);
+        renderSplit();
+      });
+      row.append(x);
+    }
+    list.append(row);
+  });
+  renderSplitLeft();
+}
+
+$("#tx-split").addEventListener("change", () => {
+  if ($("#tx-split").checked) {
+    const total = parseAmount($("#tx-amount").value) ?? 0;
+    const envs = envelopes();
+    const half = Math.round(total / 2);
+    state.splitParts = [
+      { env: state.draftEnv ?? envs[0]?.id, amount: total ? toInput(half) : "" },
+      { env: envs.find((e) => e.id !== (state.draftEnv ?? envs[0]?.id))?.id ?? envs[0]?.id, amount: total ? toInput(total - half) : "" },
+    ];
+    renderSplit();
+  }
+  updateTxTypeUI(Boolean(state.editingTx));
+});
+$("#split-add").addEventListener("click", () => {
+  const used = new Set(state.splitParts.map((p) => p.env));
+  const next = envelopes().find((e) => !used.has(e.id)) ?? envelopes()[0];
+  const left = splitLeft();
+  state.splitParts.push({ env: next?.id, amount: left > 0 ? toInput(left) : "" });
+  renderSplit();
+});
+$("#tx-amount").addEventListener("input", () => {
+  if ($("#tx-split").checked) renderSplitLeft();
+});
+
+function submitSplit(payload, cents) {
+  const parts = state.splitParts.map((p) => ({ env: p.env, cents: parseAmount(p.amount) }));
+  if (parts.length < 2 || parts.some((p) => !p.cents || !envById(p.env))) return toast("Chaque part a besoin d'un montant et d'une enveloppe.");
+  const left = splitLeft();
+  if (left !== 0) return toast(left > 0 ? `Il reste ${money(left)} à répartir.` : `Les parts dépassent le total de ${money(-left)}.`);
+
+  const splitId = uid();
+  const now = Date.now();
+  const original = state.editingTx ? state.data.expenses.find((t) => t.id === state.editingTx) : null;
+  const records = parts.map((p, i) => ({
+    id: uid(),
+    createdAt: (original?.createdAt ?? now) + i,
+    montant: p.cents,
+    libelle: payload.libelle,
+    date: payload.date,
+    envelopeId: p.env,
+    splitId,
+    ...(payload.evitable ? { evitable: true } : {}),
+    ...(payload.note ? { note: payload.note } : {}),
+  }));
+  if (original) state.data.expenses = state.data.expenses.filter((t) => t.id !== original.id);
+  state.data.expenses.push(...records);
+  state.month = monthOf(payload.date);
+  save();
+  closeSheets();
+  render();
+  offerUndo(`Dépense répartie sur ${parts.length} enveloppes.`, () => {
+    const ids = new Set(records.map((r) => r.id));
+    state.data.expenses = state.data.expenses.filter((t) => !ids.has(t.id));
+    if (original) state.data.expenses.push(original);
+  });
+}
+
 /* Dupliquer rouvre le tiroir en création, même montant, même enveloppe, même
    libellé, mais daté d'aujourd'hui : c'est le geste de la dépense qui revient
    sans être régulière au point de mériter une règle (le plein, la nounou…).
@@ -3339,7 +4072,7 @@ $("#tx-duplicate").addEventListener("click", () => {
   if (!tx) return;
   openTxSheet(
     null,
-    { montantText: toInput(tx.montant), envId: tx.envelopeId, libelle: tx.libelle, evitable: tx.evitable },
+    { montantText: toInput(tx.montant), envId: tx.envelopeId, libelle: tx.libelle, evitable: tx.evitable, note: tx.note },
     revenu ? "revenu" : "depense"
   );
 });
@@ -3532,6 +4265,8 @@ for (const id of ["#recurring-list", "#income-list"]) {
     const row = e.target.closest("[data-recurring]");
     if (!row) return;
     const rule = state.data.recurring.find((r) => r.id === row.dataset.recurring);
+    const goal = rule?.goalId && state.data.goals.find((g) => g.id === rule.goalId);
+    if (goal) return openGoalSheet(goal); // sa mise de côté se règle dans l'objectif
     if (rule) openRecurringSheet(rule);
   });
 }
@@ -3598,14 +4333,20 @@ $("#recurring-form").addEventListener("submit", (e) => {
   const libelle = $("#recurring-label").value.trim();
   $("#recurring-label-error").hidden = Boolean(libelle);
 
-  const jour = Number.parseInt($("#recurring-day").value, 10);
+  const freq = state.draftRecurringFreq;
+  const monthly = freq === "mensuel";
+  const anchor = $("#recurring-anchor").value;
+  const anchorValid = monthly || isIsoDate(anchor);
+  $("#recurring-anchor-error").hidden = anchorValid;
+  // hors « chaque mois », le jour vient de la date de référence
+  const jour = monthly ? Number.parseInt($("#recurring-day").value, 10) : isIsoDate(anchor) ? Number(anchor.slice(8, 10)) : NaN;
   const jourValid = Number.isInteger(jour) && jour >= 1 && jour <= 31;
-  $("#recurring-day-error").hidden = jourValid;
+  $("#recurring-day-error").hidden = jourValid || !monthly;
 
   const type = state.draftRecurringType;
   if (cents === null) return $("#recurring-amount").focus();
   if (!libelle) return $("#recurring-label").focus();
-  if (!jourValid) return $("#recurring-day").focus();
+  if (!jourValid) return monthly ? $("#recurring-day").focus() : $("#recurring-anchor").focus();
   if (type === "depense" && !state.draftRecurringEnv) return toast("Crée d'abord une enveloppe.");
 
   const editing = Boolean(state.editingRecurring);
@@ -3619,6 +4360,10 @@ $("#recurring-form").addEventListener("submit", (e) => {
     icone: state.draftRecurringIcon,
     envelopeId: type === "depense" ? state.draftRecurringEnv : null,
     evitable: type === "depense" && $("#recurring-evitable").checked,
+    freq,
+    ancre: monthly ? null : anchor,
+    fin: $("#recurring-end").value || null,
+    variable: $("#recurring-variable").checked,
   };
 
   /* Point de départ du rattrapage. Une règle qui sort de pause repart
@@ -3642,6 +4387,7 @@ $("#recurring-form").addEventListener("submit", (e) => {
   render();
 
   const label = type === "revenu" ? "Revenu récurrent" : "Dépense récurrente";
+  const when = monthly ? `chaque mois le ${jour}` : freqText({ freq, ancre: anchor, jour });
   if (editing)
     offerUndo(
       created ? "Modifié — le mois en cours est à jour." : `${label} modifié${type === "revenu" ? "" : "e"}.`,
@@ -3653,8 +4399,8 @@ $("#recurring-form").addEventListener("submit", (e) => {
   else
     toast(
       created
-        ? `« ${libelle} » ajouté${type === "revenu" ? "" : "e"} à ce mois-ci, puis chaque mois le ${jour}.`
-        : `« ${libelle} » reviendra chaque mois le ${jour}.`
+        ? `« ${libelle} » ajouté${type === "revenu" ? "" : "e"} à ce mois-ci, puis ${when}.`
+        : `« ${libelle} » reviendra ${when}.`
     );
 });
 
@@ -3697,6 +4443,19 @@ $("#shortcut-copy").addEventListener("click", async () => {
 });
 
 $("#export-btn").addEventListener("click", exportData);
+$("#rescue-btn").addEventListener("click", () => {
+  const raw = localStorage.getItem(RESCUE_KEY);
+  if (!raw) return;
+  const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `mon-budget-illisible-${todayIso()}.json`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast("Copie téléchargée : réimporte-la une fois réparée.");
+});
 $("#import-btn").addEventListener("click", () => $("#import-file").click());
 $("#import-file").addEventListener("change", (e) => {
   const file = e.target.files?.[0];
@@ -3734,21 +4493,226 @@ function matchEnvelope(raw) {
   return envelopes().find((e) => norm(e.nom) === norm(raw)) ?? null;
 }
 
+/** « hier », « aujourd'hui » ou une date ISO ; sinon aujourd'hui. */
+function resolveDateParam(raw) {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (isIsoDate(v)) return v;
+  const d = new Date();
+  if (v === "hier") d.setDate(d.getDate() - 1);
+  return isoDay(d);
+}
+
+/* Une saisie venue d'un raccourci n'est jamais comptée deux fois : Raccourcis peut relancer
+   une automatisation, et un fichier peut être importé deux fois. `src` identifie la saisie. */
+const inboxKey = (type, cents, libelle, date) => `${type}|${cents}|${noAccent(libelle)}|${date}`;
+
+/** Enveloppe d'une saisie sans enveloppe explicite : celle que ce libellé a déjà reçue le plus souvent. */
+function envelopeFromLabel(libelle) {
+  const key = noAccent(libelle);
+  const group = key ? labelGroups(libelle).find((g) => g.key === key) : null;
+  const id = group ? topEnvOf(group) : null;
+  return id && envelopes().some((e) => e.id === id) ? { id, evitable: group.ev * 2 > group.n } : null;
+}
+
+/** Note une saisie sans passer par le tiroir. Renvoie false s'il manque l'enveloppe (on ne devine pas). */
+function quickSave({ type, cents, libelle, envId, note, date, evitable, src }) {
+  const revenu = type === "revenu";
+  const target = revenu ? state.data.incomes : state.data.expenses;
+  const key = src ?? inboxKey(type, cents, libelle, date);
+  if (target.some((t) => t.src === key && Date.now() - t.createdAt < 120000)) {
+    toast("Déjà noté il y a un instant.");
+    return true;
+  }
+  let env = envId ? { id: envId, evitable } : null;
+  if (!revenu && !env) env = envelopeFromLabel(libelle);
+  if (!revenu && !env) return false;
+  const record = {
+    id: uid(), createdAt: Date.now(), montant: cents, libelle, date, via: "raccourci", src: key,
+    ...(note ? { note } : {}),
+    ...(!revenu ? { envelopeId: env.id } : {}),
+    ...(!revenu && (evitable || env.evitable) ? { evitable: true } : {}),
+  };
+  target.push(record);
+  state.month = monthOf(date);
+  save();
+  render();
+  offerUndo(
+    revenu ? `${money(cents)} noté en revenu.` : `${money(cents)} noté dans « ${envById(env.id)?.nom} »${libelle ? ` (${libelle})` : ""}.`,
+    () => {
+      const list = revenu ? state.data.incomes : state.data.expenses;
+      if (revenu) state.data.incomes = list.filter((t) => t.id !== record.id);
+      else state.data.expenses = list.filter((t) => t.id !== record.id);
+    }
+  );
+  return true;
+}
+
+/** @returns {boolean} vrai si le lien a été traité (tiroir ouvert ou saisie enregistrée) */
 function consumeShortcutLink() {
   const params = new URLSearchParams(location.search);
-  if (params.get("ajouter") !== "1") return;
+  if (params.get("ajouter") !== "1") return false;
 
   const cents = parseAmount(params.get("montant") ?? "");
+  const type = params.get("type") === "revenu" ? "revenu" : "depense";
   const env = matchEnvelope(params.get("env"));
+  const libelle = (params.get("libelle") ?? "").slice(0, 60);
+  const note = (params.get("note") ?? "").slice(0, 200);
+  const date = resolveDateParam(params.get("date"));
+  const evitable = params.get("evitable") === "1";
 
-  // la dépense n'est pas encore enregistrée : rien à perdre à nettoyer l'URL tout de suite
+  // rien n'est encore enregistré : on peut nettoyer l'URL tout de suite
   history.replaceState(null, "", location.pathname + location.hash);
 
-  openTxSheet(null, {
-    montantText: cents !== null ? toInput(cents) : "",
-    envId: env?.id,
-    libelle: params.get("libelle") ?? "",
+  /* « enregistrer=1 » : noté sans confirmation, mais annulable — et seulement si l'enveloppe est
+     connue (donnée, ou déjà associée à ce libellé). Sinon le tiroir s'ouvre : on ne devine pas. */
+  if (params.get("enregistrer") === "1" && cents !== null && quickSave({ type, cents, libelle, envId: env?.id, note, date, evitable })) return true;
+
+  openTxSheet(
+    null,
+    { montantText: cents !== null ? toInput(cents) : "", envId: env?.id, libelle, date, note, evitable },
+    type
+  );
+  return true;
+}
+
+/* ---- boîte de réception : les saisies déposées par Raccourcis dans un dossier de Fichiers ---- */
+
+/** Lit un fichier de saisies : une par ligne « montant ; libellé ; date ; enveloppe », ou du JSON. */
+function parseInbox(text, fileName) {
+  const entries = [];
+  let skipped = 0;
+  String(text).split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) return;
+    let f;
+    if (line.startsWith("{")) {
+      try {
+        const o = JSON.parse(line);
+        f = { montant: o.montant, libelle: o.libelle ?? o.commercant ?? "", date: o.date, env: o.env ?? o.enveloppe, note: o.note, type: o.type };
+      } catch {
+        return void skipped++;
+      }
+    } else {
+      const [montant, libelle, date, env] = line.split(";").map((x) => x.trim());
+      f = { montant, libelle, date, env };
+    }
+    const cents = cleanCents(typeof f.montant === "string" ? f.montant : Number(f.montant));
+    const libelle = String(f.libelle ?? "").trim().slice(0, 60);
+    if (cents === null || !libelle) return void skipped++; // montant nul ou commerçant vide : le cas signalé par iOS
+    // date : ISO avec heure (donne aussi l'identité de la saisie), ISO simple, ou JJ/MM/AAAA
+    const rawDate = String(f.date ?? "").trim();
+    let date = todayIso();
+    let dated = false;
+    const fr = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(rawDate);
+    if (fr) {
+      date = `${fr[3]}-${pad(Number(fr[2]))}-${pad(Number(fr[1]))}`;
+      dated = true;
+    } else if (rawDate && !Number.isNaN(Date.parse(rawDate))) {
+      date = isIsoDate(rawDate) ? rawDate : isoDay(new Date(rawDate));
+      dated = rawDate.length > 10; // une heure précise suffit à distinguer deux achats identiques
+    }
+    entries.push({
+      type: f.type === "revenu" ? "revenu" : "depense",
+      cents, libelle, date, env: f.env ?? "", note: String(f.note ?? "").slice(0, 200),
+      // sans heure, deux achats identiques ne se distinguent que par leur place dans le fichier
+      src: dated ? inboxKey("depense", cents, libelle, rawDate) : `${fileName}#${i}|${line}`.slice(0, 200),
+    });
   });
+  return { entries, skipped };
+}
+
+async function importInbox(files) {
+  let skipped = 0;
+  const all = [];
+  for (const file of files) {
+    if (file.size > 1_000_000) {
+      skipped++;
+      continue;
+    }
+    const { entries, skipped: s } = parseInbox(await file.text(), file.name);
+    all.push(...entries);
+    skipped += s;
+  }
+
+  const have = new Set([...state.data.expenses, ...state.data.incomes].map((t) => t.src).filter(Boolean));
+  const created = [];
+  let doubles = 0;
+  let unfiled = 0;
+  for (const e of all) {
+    if (have.has(e.src)) {
+      doubles++;
+      continue;
+    }
+    have.add(e.src);
+    const revenu = e.type === "revenu";
+    let envId = null;
+    let evitable = false;
+    if (!revenu) {
+      const named = e.env ? matchEnvelope(e.env) : null;
+      const guessed = named ? { id: named.id, evitable: false } : envelopeFromLabel(e.libelle);
+      envId = guessed?.id ?? null;
+      evitable = Boolean(guessed?.evitable);
+      if (!envId) unfiled++;
+    }
+    created.push({
+      kind: revenu ? "revenu" : "depense",
+      record: {
+        id: uid(), createdAt: Date.now() + created.length, montant: e.cents, libelle: e.libelle, date: e.date,
+        via: "raccourci", src: e.src,
+        ...(e.note ? { note: e.note } : {}),
+        ...(!revenu ? { envelopeId: envId } : {}),
+        ...(evitable ? { evitable: true } : {}),
+      },
+    });
+  }
+
+  if (!created.length) {
+    toast(doubles ? `Rien de nouveau : ${doubles} saisie${doubles > 1 ? "s" : ""} déjà importée${doubles > 1 ? "s" : ""}.` : skipped ? `Aucune saisie lisible (${skipped} ligne${skipped > 1 ? "s" : ""} ignorée${skipped > 1 ? "s" : ""}).` : "Aucune saisie trouvée dans ces fichiers.");
+    return;
+  }
+  for (const c of created) (c.kind === "revenu" ? state.data.incomes : state.data.expenses).push(c.record);
+  state.data.settings.lastInbox = { at: Date.now(), n: created.length };
+  save();
+  render();
+  const bits = [`${created.length} saisie${created.length > 1 ? "s" : ""} importée${created.length > 1 ? "s" : ""}`];
+  if (unfiled) bits.push(`${unfiled} à classer`);
+  if (doubles) bits.push(`${doubles} déjà présente${doubles > 1 ? "s" : ""}`);
+  if (skipped) bits.push(`${skipped} ignorée${skipped > 1 ? "s" : ""}`);
+  offerUndo(bits.join(" · ") + ".", () => {
+    const ids = new Set(created.map((c) => c.record.id));
+    state.data.expenses = state.data.expenses.filter((t) => !ids.has(t.id));
+    state.data.incomes = state.data.incomes.filter((t) => !ids.has(t.id));
+  });
+}
+
+$("#inbox-btn").addEventListener("click", () => $("#inbox-file").click());
+$("#inbox-file").addEventListener("change", (e) => {
+  const files = [...(e.target.files ?? [])];
+  e.target.value = "";
+  if (files.length) importInbox(files).catch(() => toast("Lecture des fichiers impossible."));
+});
+$("#inbox-copy").addEventListener("click", async () => {
+  const template = "12,50 ; Monoprix ; 2026-10-14T18:32:10+02:00";
+  try {
+    await navigator.clipboard.writeText(template);
+    toast("Modèle copié : colle-le dans l'action Texte, puis remplace chaque champ par sa variable.");
+  } catch {
+    toast(`Modèle : ${template}`);
+  }
+});
+
+$("#open-on-add").addEventListener("change", (e) => {
+  state.data.settings.openOnAdd = e.target.checked;
+  save();
+  toast(e.target.checked ? "L'appli s'ouvrira sur « Nouvelle dépense »." : "L'appli s'ouvrira normalement.");
+});
+
+/** Ouvre « Nouvelle dépense » à l'ouverture de l'appli si l'utilisateur l'a demandé. */
+function maybeOpenOnAdd() {
+  if (!state.data.settings.openOnAdd || needsOnboarding() || document.querySelector(".sheet.show")) return false;
+  if (!envelopes().length) return false;
+  openTxSheet(null);
+  return true;
 }
 
 /* ---------------------------------------------------------- premier lancement */
@@ -3905,12 +4869,19 @@ if (lastRepairCount) save();
 
 render();
 const startup = generateRecurring();
+// un objectif atteint grâce aux mises de côté automatiques n'a plus à en recevoir
+if (state.data.goals.some((g) => g.mensuel > 0)) {
+  syncSavings();
+  save();
+}
 if (startup.created) render();
 const caughtUp = backfillMessage(startup);
 if (caughtUp) toast(caughtUp);
-else maybeRemindBackup();
+else if (loadRescued) toast("Tes données n'ont pas pu être lues : une copie est gardée, récupérable dans Réglages.");
+else if (!maybeAnnounceRecap()) maybeRemindBackup();
 requestPersistence();
-consumeShortcutLink();
+// un lien de raccourci prime ; sinon, l'ouverture directe sur la saisie (si elle est activée)
+if (!consumeShortcutLink()) maybeOpenOnAdd();
 // les boutons d'onglet ne sont mesurables qu'une fois la mise en page faite
 requestAnimationFrame(positionTabPill);
 
@@ -3923,8 +4894,13 @@ document.documentElement.dataset.appReady = "1";
    rouverte le mois suivant, elle afficherait encore le mois précédent et
    n'aurait tamponné aucune échéance entre-temps. */
 let lastSeenDay = todayIso();
+let hiddenAt = 0;
 document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") hiddenAt = Date.now();
   if (document.visibilityState !== "visible") return;
+  // revenu après plus de deux minutes : « Ouvrir l'app » doit retomber sur la saisie, comme au premier lancement
+  if (hiddenAt && Date.now() - hiddenAt > 120000) setTimeout(maybeOpenOnAdd, 50);
+  hiddenAt = 0;
   applyTextScale(); // le réglage a pu changer pendant que l'appli était en arrière-plan
   const today = todayIso();
   if (today === lastSeenDay) return;

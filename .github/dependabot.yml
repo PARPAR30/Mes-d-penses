@@ -1,0 +1,11 @@
+# Met à jour les actions GitHub (checkout, setup-node, pages…) : une pull request par mois au plus,
+# testée par la CI avant fusion. Rien n'est publié tant que les tests ne passent pas.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,6 +1,6 @@
 {
   "name": "mon-budget",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Budget et dépenses par enveloppes — 100% local (localStorage)",
   "private": true,
   "scripts": {

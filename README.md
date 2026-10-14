@@ -31,20 +31,32 @@ Le fichier `web/index.html` s'ouvre aussi directement par double-clic — sans l
 
 L'appli s'ouvre alors en plein écran, sans barre d'adresse, et fonctionne sans connexion.
 
-## Ajouter une dépense depuis un raccourci Apple
+## Ajouter une dépense depuis l'iPhone
 
-iOS n'offre à aucune appli tierce le moyen de détecter un paiement Apple Pay pour se déclencher automatiquement — ni Raccourcis, ni Mon Budget. La carte **Réglages → Ajout rapide** propose donc le plus proche que permette la plateforme : un raccourci lancé en un geste (bouton Action, tapotement arrière, écran d'accueil) qui ouvre directement le tiroir « Nouvelle dépense ».
+**Ce qu'il faut savoir d'abord.** Une appli posée sur l'écran d'accueil a son propre stockage, **séparé de Safari**. Un lien lancé par Raccourcis (« Ouvrir les URL ») s'ouvre en pratique dans Safari, pas dans l'appli installée : la dépense serait notée dans le mauvais stockage. L'ancien raccourci par lien ne convient donc qu'à un site utilisé **dans Safari** ou sur ordinateur. Pour l'appli installée, trois chemins fiables :
 
-Le contrat d'URL, géré par `consumeShortcutLink()` dans `web/app.js` :
+1. **Ouvrir directement sur la saisie** (Réglages) : au lancement, et au retour après plus de deux minutes d'absence, l'appli ouvre « Nouvelle dépense » avec le clavier du montant prêt. Associe le **bouton Action** (ou le tapotement arrière) à *Ouvrir l'app › Mon Budget* : un geste, un montant, c'est noté.
+2. **Boîte de réception par fichiers** : un raccourci dépose chaque saisie dans un dossier de *Fichiers* (iCloud Drive › Mon Budget) ; *Réglages › Importer les saisies* les lit, plusieurs fichiers d'un coup. L'enveloppe est choisie d'après le libellé (comme la suggestion d'enveloppe) ; sinon la dépense attend dans « À classer ». Une saisie déjà importée n'est jamais recréée, et l'import est annulable.
+3. **Automatisation Apple Pay** : depuis iOS 17, Raccourcis propose un déclencheur **Transaction** (Wallet) qui fournit le commerçant et le montant. Combinée à la boîte de réception, elle note chaque paiement sans y penser. Les intitulés exacts varient selon la version d'iOS, et des utilisateurs signalent que iOS transmet parfois un montant à 0 ou un commerçant vide (l'import ignore ces lignes et les compte). *Réglages › Saisies des Raccourcis* détaille les étapes.
+
+Format d'un fichier de saisies : une saisie par ligne, `montant ; libellé ; date ; enveloppe` (seuls les deux premiers sont obligatoires ; date ISO avec heure ou `JJ/MM/AAAA` ; `#` pour un commentaire). Un objet JSON par ligne est aussi accepté.
+
+### Le lien web (Safari, ordinateur)
+
+Géré par `consumeShortcutLink()` dans `web/app.js` :
 
 | Paramètre | Effet |
 |---|---|
 | `ajouter=1` | requis — ouvre le tiroir de saisie |
-| `montant=12,50` | préremplit le montant (accepte virgule ou point) ; ignoré silencieusement s'il est illisible |
-| `env=Courses` | présélectionne l'enveloppe, par id ou par nom (insensible à la casse) |
+| `montant=12,50` | préremplit le montant (virgule ou point) ; ignoré s'il est illisible |
 | `libelle=Boulangerie` | préremplit le libellé |
+| `env=Courses` | présélectionne l'enveloppe, par id ou par nom (sans accent ni casse) |
+| `type=revenu` | note un revenu au lieu d'une dépense |
+| `date=2026-10-14` | `hier`, `aujourd'hui` ou une date ISO |
+| `note=…`, `evitable=1` | préremplissent la note et l'étiquette |
+| `enregistrer=1` | note **sans confirmation**, annulable — seulement si l'enveloppe est donnée ou déjà associée à ce libellé ; sinon le tiroir s'ouvre (on ne devine pas) |
 
-La dépense n'est jamais enregistrée sans confirmation : le tiroir s'ouvre toujours pour laisser vérifier montant et catégorie avant validation.
+Un même lien relancé dans les deux minutes ne note pas deux fois. Encode l'URL (action « Encoder l'URL ») quand le texte contient des espaces ou des `&`.
 
 ## Ce que fait l'appli
 
@@ -63,6 +75,15 @@ Le bouton **+**, au centre de la barre d'onglets, note une dépense ou un revenu
 ## Gestes et accessibilité
 
 Balayer une ligne vers la gauche la supprime (annulable) ; balayer une vue change de mois ; toucher le titre du mois ouvre un sélecteur de mois et d'année ; glisser la poignée d'un tiroir vers le bas le ferme. Tiroir ouvert, le reste de l'appli est `inert` et le focus revient au bouton d'origine à la fermeture ; les groupes de choix se parcourent aux flèches. Les tailles de texte sont en `rem` et suivent la taille réglée dans iOS (`--text-scale`).
+
+## Reste à vivre, avis, récap
+
+- **Reste à vivre par jour** : « Tu peux dépenser 23 € par jour jusqu'à la fin du mois », après déduction des charges fixes pas encore prélevées.
+- **Avis** en tête de l'accueil : budget à 80 % ou dépassé, dépenses **à classer** (sans enveloppe), montants **à confirmer** (règle à montant variable). iOS n'envoie pas de notification à une appli web sans serveur : les avis vivent dans l'appli.
+- **Le mois en trois phrases** (Bilan), et une annonce en début de mois.
+- **Note**, **division** d'une dépense entre plusieurs enveloppes (une dépense liée par part, `splitId`) et **virement de budget** d'une enveloppe à une autre pour le mois (`transfers`).
+- **Épargne automatique** : un objectif peut recevoir une mise de côté mensuelle, qui est une vraie dépense de l'enveloppe « Épargne » (créée au besoin) et fait avancer l'objectif.
+- **Récurrences** : chaque mois, semaine, trimestre ou année ; date de fin ; montant variable (noté « estimé », confirmé en l'ouvrant).
 
 ## Budgets, report, objectifs
 
@@ -143,12 +164,12 @@ design/chartes.html   les quatre directions proposées au départ (état d'origi
 
 ## Intégration continue
 
-`pages.yml` lance d'abord `npm test` (Node 24 + le Chrome des runners Ubuntu) ; le site n'est déployé que si les tests passent. Une pull request est testée mais ne publie rien.
+`pages.yml` lance d'abord `npm test` puis l'audit de mise en page en mode strict (Node 24 + le Chrome des runners Ubuntu) ; le site n'est déployé que si tout passe. Dependabot propose chaque mois la mise à jour des actions GitHub. Les versions publiées sont décrites dans [CHANGELOG.md](CHANGELOG.md). Une pull request est testée mais ne publie rien.
 
 ## Tests
 
 ```bash
-npm test          # régressions : 220 vérifications, sortie non nulle si l'une casse
+npm test          # régressions : 293 vérifications, sortie non nulle si l'une casse
 npm run audit     # audit de mise en page : débordements, texte coupé, cibles tactiles
 ```
 
@@ -156,7 +177,7 @@ Les deux pilotent un **vrai Chrome** par le protocole DevTools, à la taille d'u
 
 jsdom ne conviendrait pas : il ne reproduit ni la mise en page, ni le canevas qui dimensionne le champ montant, ni la règle `[hidden]{display:none}` de la feuille par défaut — c'est-à-dire précisément les endroits où les bugs sont tombés.
 
-L'audit signale encore deux points, tenus pour acceptables : les segments de la barre de répartition font 28 px de haut (la légende juste dessous offre la même action sur 44 px), et les cases du calendrier tombent à 34 px sur un écran de 320 px (sept colonnes dans 256 px utiles, c'est de la géométrie).
+En mode strict (`npm run audit -- --strict`, ou `CI=1`), seules les anomalies inconnues font échouer. L'audit signale encore deux points, tenus pour acceptables : les segments de la barre de répartition font 28 px de haut (la légende juste dessous offre la même action sur 44 px), et les cases du calendrier tombent à 34 px sur un écran de 320 px (sept colonnes dans 256 px utiles, c'est de la géométrie).
 
 ## Régénérer les icônes
 
